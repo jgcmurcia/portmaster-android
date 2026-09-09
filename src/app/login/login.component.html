@@ -11,9 +11,14 @@
       <ion-icon name="eye-off" *ngIf="ShowPassword"></ion-icon>
     </ion-button>
   </ion-item>
-  <ion-button expand="full" (click)="login();">Login</ion-button>
+  <ion-button expand="full" (click)="login();" [disabled]="Loading || !Username || !Password">
+    <ion-spinner *ngIf="Loading" name="crescent"></ion-spinner>
+    <span *ngIf="!Loading">Login to Safing</span>
+  </ion-button>
   <ion-item>
-    <ion-label class="ion-text-center">Don't have an account?<br><a href="https://account.safing.io/account/sign_up">Sign Up</a></ion-label>
+    <ion-label class="ion-text-center">Don't have an account?<br>
+      <ion-button fill="clear" size="small" (click)="openSignup()">Create Safing account</ion-button>
+    </ion-label>
   </ion-item>
   <ion-item class="error">
     <ion-label class="ion-text-center">{{Error}}</ion-label>
