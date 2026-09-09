@@ -17,11 +17,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Java 11
-        uses: actions/setup-java@v4
+      - name: Set up Java 17 for Android tools
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "11"
+          java-version: "17"
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -37,6 +37,14 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+
+      # AGP 7.2.x in this legacy project was built around JDK 11. Keep the
+      # modern sdkmanager on JDK 17, then switch back for the actual build.
+      - name: Set up Java 11 for legacy Android build
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "11"
 
       - name: Install gomobile
         working-directory: go
