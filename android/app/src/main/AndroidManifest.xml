@@ -11,8 +11,11 @@
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
 
-      <service android:name="io.safing.portmaster.android.connectivity.PortmasterTunnelService"
-        android:permission="android.permission.BIND_VPN_SERVICE" android:exported="true">
+      <service
+        android:name="io.safing.portmaster.android.connectivity.PortmasterTunnelService"
+        android:permission="android.permission.BIND_VPN_SERVICE"
+        android:exported="true"
+        android:stopWithTask="false">
         <intent-filter>
           <action android:name="android.net.VpnService"/>
         </intent-filter>
@@ -46,6 +49,7 @@
 
     <!-- Permissions -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
       tools:ignore="QueryAllPackagesPermission" />
 
