@@ -93,6 +93,9 @@ export class SPNViewComponent implements OnInit, OnDestroy {
 
   async setSPNEnabled(v: boolean) {
     try {
+      if (v && !(await GoBridge.IsTunnelActive())) {
+        await GoBridge.EnableTunnel();
+      }
       await GoBridge.SetSPNEnabled(v);
       await this.refreshDirectStatus();
     } catch (err) {
@@ -163,6 +166,17 @@ export class SPNViewComponent implements OnInit, OnDestroy {
         this.SPNStatus = JSON.parse(rawStatus) as SPNStatus;
       }
       this.TunnelError = await GoBridge.GetTunnelLastError();
+
+      if (!this.User) {
+        try {
+          const rawProfile = await GoBridge.GetSPNUserProfile();
+          if (rawProfile) {
+            this.User = JSON.parse(rawProfile) as UserProfile;
+          }
+        } catch (_) {
+          // Logged-out state is normal.
+        }
+      }
       this.changeDetector.detectChanges();
     } catch (err) {
       console.debug("Direct SPN status not ready", err);
@@ -181,7 +195,7 @@ export class SPNViewComponent implements OnInit, OnDestroy {
   }
 
   openConnectionInfo() {
-    if (this.SPNStatus.Status != "connected") {
+    if (!this.SPNStatus || this.SPNStatus.Status != "connected") {
       return;
     }
 
