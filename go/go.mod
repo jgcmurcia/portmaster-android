@@ -11,7 +11,7 @@ require (
 	github.com/safing/portmaster v1.1.0
 	github.com/safing/spn v0.6.8
 	github.com/tevino/abool v1.2.0
-	gvisor.dev/gvisor v0.0.0-20220817001344-846276b3dbc5
+	gvisor.dev/gvisor v0.0.0-20230323070900-fa7aa5b4e2e5
 )
 
 require (
@@ -74,4 +74,4 @@ require (
 // revisions pull in a Linux-only stopfd package and no longer cross-compile
 // through gomobile for Android. Keep the Android-compatible revision this
 // project originally declared.
-replace gvisor.dev/gvisor => gvisor.dev/gvisor v0.0.0-20220817001344-846276b3dbc5
+replace gvisor.dev/gvisor v0.0.0-20230323070900-fa7aa5b4e2e5 => gvisor.dev/gvisor v0.0.0-20220817001344-846276b3dbc5
