@@ -58,6 +58,7 @@ jobs:
         working-directory: go
         run: |
           go mod download
+          go mod download golang.org/x/mobile
           go list -f '{{.Dir}}' golang.org/x/mobile/bind
 
       - name: Build Go Android bindings
