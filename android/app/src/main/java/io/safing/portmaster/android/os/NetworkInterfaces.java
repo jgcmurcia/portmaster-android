@@ -15,7 +15,7 @@ public class NetworkInterfaces extends Function {
 
   @Override
   public byte[] call(byte[] args) throws Exception {
-    List<NetworkInterface> interfaces = null;
+    List<NetworkInterface> interfaces;
     try {
       interfaces = Collections.list(NetworkInterface.getNetworkInterfaces());
     } catch (Exception e) {
@@ -29,13 +29,15 @@ public class NetworkInterfaces extends Function {
         inf.name = nif.getName();
         inf.index = nif.getIndex();
         inf.MTU = nif.getMTU();
+        inf.up = nif.isUp();
         inf.multicast = nif.supportsMulticast();
-        inf.loopback = true;
+        inf.loopback = nif.isLoopback();
         inf.p2p = nif.isPointToPoint();
         inf.addresses = NetworkAddresses.getInterfaceAddresses(nif);
         netInterfaces.add(inf);
       } catch (Exception e) {
-        continue;
+        // Interfaces can disappear while Android is switching transports.
+        // Skip stale entries and let the next network callback refresh state.
       }
     }
 
