@@ -5,7 +5,6 @@ import (
 	"math/rand"
 	"net"
 	"os"
-	"strings"
 	"syscall"
 
 	"github.com/safing/portbase/log"
@@ -31,7 +30,7 @@ var (
 )
 
 func init() {
-	eventChannel = make(chan string)
+	eventChannel = make(chan string, 8)
 	module = modules.Register("vpn-service", nil, start, nil, "base")
 	module.Enable()
 }
@@ -107,7 +106,16 @@ func setupTunnelInterface() {
 		return
 	}
 
+	if fd <= 0 {
+		log.Errorf("vpn-service: invalid tunnel file descriptor: %d", fd)
+		return
+	}
+
 	tunnelFD = os.NewFile(uintptr(fd), "tunnel")
+	if tunnelFD == nil {
+		log.Errorf("vpn-service: failed to wrap tunnel file descriptor: %d", fd)
+		return
+	}
 
 	initializeRouter()
 
@@ -179,17 +187,28 @@ func setupTunnelInterface() {
 		},
 	})
 
-	// Finding the tunnel interface that was set from Java
+	// Find Portmaster's own TUN by its configured address. Selecting the last
+	// interface named "tun*" can attach gVisor to another VPN/TUN on the device.
 	var tunnelInterface *app_interface.NetworkInterface
 	interfaces, err := app_interface.GetNetworkInterfaces()
 	if err != nil {
 		log.Errorf("vpn-service: failed to get network interfaces: %s", err)
 		return
 	}
-	for _, i := range interfaces {
-		if strings.HasPrefix(i.Name, "tun") {
-			tunnelInterface = &i
+	for idx := range interfaces {
+		for _, addr := range interfaces[idx].Addresses {
+			if addr.Addr == "100.127.247.245" {
+				tunnelInterface = &interfaces[idx]
+				break
+			}
 		}
+		if tunnelInterface != nil {
+			break
+		}
+	}
+	if tunnelInterface == nil {
+		log.Errorf("vpn-service: Portmaster tunnel interface not found")
+		return
 	}
 
 	// Setting the IP4/6 addresses to the interface
@@ -256,7 +275,8 @@ func destroyTunnelInterface() {
 
 	// Close the NIC file descriptor
 	if tunnelFD != nil {
-		tunnelFD.Close()
+		_ = tunnelFD.Close()
+		tunnelFD = nil
 	}
 }
 
