@@ -158,7 +158,7 @@ func configureInternalAPI() error {
 		internalAPIErr = api.SetAuthenticator(func(r *http.Request, _ *http.Server) (*api.AuthToken, error) {
 			supplied := r.Header.Get(InternalAPIAuthHeader)
 			if subtle.ConstantTimeCompare([]byte(supplied), []byte(internalAPIToken)) != 1 {
-				return nil, fmt.Errorf("%wPortmaster Android internal API authentication failed", api.ErrAPIAccessDeniedMessage)
+				return nil, fmt.Errorf("Portmaster Android internal API authentication failed: %w", api.ErrAPIAccessDeniedMessage)
 			}
 			return &api.AuthToken{
 				Read:  api.PermitSelf,
