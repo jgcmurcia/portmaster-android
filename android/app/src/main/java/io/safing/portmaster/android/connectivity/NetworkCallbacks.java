@@ -20,7 +20,8 @@ public class NetworkCallbacks extends ConnectivityManager.NetworkCallback {
   public void onAvailable(@NonNull Network network) {
     super.onAvailable(network);
     Engine.onNetworkConnected();
-    service.onUnderlyingNetworkAvailable(network);
+    // Wait for onCapabilitiesChanged before treating this network as an underlay.
+    // That lets us reject TRANSPORT_VPN and prevents self-triggered reconnect loops.
   }
 
   @Override
