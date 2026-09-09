@@ -92,8 +92,9 @@ func OnCreate(appDir string) {
 	updates.DisableUpdateSchedule()
 	helper.IntelOnly()
 
-	// Don't connect after login. GeoIP data is probably not downloaded.
-	access.EnableAfterLogin = false
+	// Android must behave like desktop Portmaster: after a successful login,
+	// automatically enable SPN when the account includes the SPN feature.
+	access.EnableAfterLogin = true
 
 	// Initialize database.
 	err = dataroot.Initialize(dataDir, 0o0755)
