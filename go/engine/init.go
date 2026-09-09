@@ -114,9 +114,24 @@ func OnCreate(appDir string) {
 	}
 	logs.InitLogs()
 
-	// Run the spn service and all the dependencies.
+	// Run the SPN service and all dependencies.
 	go func() {
 		_ = run.Run()
+	}()
+
+	// Android disables Portmaster's periodic software update scheduler because
+	// APK updates are handled by Android. Intel data is different: SPN cannot
+	// bootstrap without current map/GeoIP resources. Trigger one update as soon
+	// as the updates module is ready, retrying briefly during cold start.
+	go func() {
+		for attempt := 0; attempt < 15; attempt++ {
+			time.Sleep(2 * time.Second)
+			if err := updates.TriggerUpdate(true); err == nil {
+				log.Info("engine: initial Android intel update triggered")
+				return
+			}
+		}
+		log.Warning("engine: updates module did not become ready for initial intel refresh")
 	}()
 }
 
