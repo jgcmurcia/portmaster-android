@@ -7,7 +7,7 @@ require (
 	github.com/fxamacker/cbor/v2 v2.4.0
 	github.com/hashicorp/go-version v1.6.0
 	github.com/miekg/dns v1.1.50
-	github.com/safing/portbase v0.16.6
+	github.com/safing/portbase v0.16.4
 	github.com/safing/portmaster v0.7.8
 	github.com/safing/spn v0.3.7
 	github.com/tevino/abool v1.2.0
