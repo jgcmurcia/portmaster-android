@@ -12,6 +12,7 @@ import android.content.pm.PackageManager;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.net.NetworkRequest;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.Handler;
@@ -337,7 +338,20 @@ public class PortmasterTunnelService extends VpnService {
       }
 
       networkCallback = new NetworkCallbacks(this);
-      connectivityManager.registerDefaultNetworkCallback(networkCallback);
+
+      // Monitor physical underlays explicitly. Once a VpnService is established,
+      // the system default network may be the VPN itself; a default-network
+      // callback can therefore miss the Wi-Fi <-> cellular handoff we care about.
+      // This is the same separation used by mature Android VPNs such as RethinkDNS.
+      NetworkRequest networkRequest = new NetworkRequest.Builder()
+        .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+        .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+        .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
+        .addTransportType(NetworkCapabilities.TRANSPORT_ETHERNET)
+        .build();
+
+      connectivityManager.registerNetworkCallback(networkRequest, networkCallback);
     }
   }
 
