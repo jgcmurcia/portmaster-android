@@ -139,26 +139,26 @@ func PerformRequest(call PluginCall) {
 	}
 
 	targetURL := engine.InternalAPIBaseURL() + internalPath
-	httpRequest, err := http.NewRequest(request.Method, targetURL, strings.NewReader(request.Body))
-	if err != nil {
-		log.Errorf("engine: failed to create internal API request: %s", err)
-		call.Error(err.Error())
-		return
-	}
-
-	for key, values := range request.Headers {
-		for _, value := range values {
-			httpRequest.Header.Add(key, value)
-		}
-	}
-	httpRequest.Header.Set(engine.InternalAPIAuthHeader, engine.InternalAPIToken())
-
 	client := &http.Client{Timeout: 30 * time.Second}
 	var response *http.Response
+
 	// During app startup the WebView can issue its first request just before
-	// Portbase's API worker has bound the loopback socket. Retry only transport
-	// errors; HTTP errors are returned immediately to the UI.
+	// Portbase's API worker has bound the loopback socket. Rebuild the request
+	// on every retry so POST/PUT bodies are never reused after a failed attempt.
 	for attempt := 0; attempt < 10; attempt++ {
+		httpRequest, requestErr := http.NewRequest(request.Method, targetURL, strings.NewReader(request.Body))
+		if requestErr != nil {
+			log.Errorf("engine: failed to create internal API request: %s", requestErr)
+			call.Error(requestErr.Error())
+			return
+		}
+		for key, values := range request.Headers {
+			for _, value := range values {
+				httpRequest.Header.Add(key, value)
+			}
+		}
+		httpRequest.Header.Set(engine.InternalAPIAuthHeader, engine.InternalAPIToken())
+
 		response, err = client.Do(httpRequest)
 		if err == nil {
 			break
