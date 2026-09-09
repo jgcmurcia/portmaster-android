@@ -54,4 +54,23 @@ if source.count("injectAndroidGeoIPCompat(registry)") < 2:
     source = source.replace(update_anchor, update_replacement, 1)
 
 main.write_text(source)
+# Ensure the SPN captain cannot race the updater on a clean Android install.
+spn_dir = Path(subprocess.check_output(
+    ["go", "list", "-m", "-f", "{{.Dir}}", "github.com/safing/spn"],
+    cwd=root,
+    text=True,
+).strip())
+captain_module = spn_dir / "captain" / "module.go"
+captain_module.parent.chmod(captain_module.parent.stat().st_mode | 0o200)
+captain_module.chmod(captain_module.stat().st_mode | 0o200)
+captain_source = captain_module.read_text()
+captain_anchor = 'module = modules.Register("captain", prep, start, stop, "base", "terminal", "cabin", "docks", "crew", "navigator", "sluice", "patrol", "netenv")'
+captain_replacement = 'module = modules.Register("captain", prep, start, stop, "base", "terminal", "cabin", "docks", "crew", "navigator", "sluice", "patrol", "netenv", "updates")'
+if captain_anchor in captain_source:
+    captain_source = captain_source.replace(captain_anchor, captain_replacement, 1)
+elif captain_replacement not in captain_source:
+    raise SystemExit("could not locate SPN captain dependency anchor")
+captain_module.write_text(captain_source)
+
 print(f"patched Portmaster updater at {pm_dir}")
+print(f"patched SPN captain startup ordering at {spn_dir}")
