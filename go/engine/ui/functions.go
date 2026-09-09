@@ -8,12 +8,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/safing/portbase/config"
 	"github.com/safing/portbase/log"
 	"github.com/safing/portmaster-android/go/app_interface"
 	"github.com/safing/portmaster-android/go/engine"
 	"github.com/safing/portmaster-android/go/engine/bug_report"
 	"github.com/safing/portmaster-android/go/engine/logs"
 	"github.com/safing/portmaster-android/go/engine/tunnel"
+	"github.com/safing/portmaster/profile"
+	"github.com/safing/spn/access"
+	"github.com/safing/spn/captain"
 )
 
 // Functions that have PluginCall as an argument are automatically exposed to the ionic UI
@@ -29,6 +33,108 @@ func EnableTunnel() {
 
 func RestartTunnel() {
 	tunnel.Reconnect()
+}
+
+// SPNLogin authenticates directly through the SPN access client. Keeping this
+// flow inside Go avoids coupling account login to the legacy WebView HTTP bridge.
+func SPNLogin(username, password string) (string, error) {
+	username = strings.TrimSpace(username)
+	if username == "" || password == "" {
+		return "", fmt.Errorf("username and password are required")
+	}
+
+	access.EnableAfterLogin = true
+	user, code, err := access.Login(username, password)
+	if err != nil {
+		if code != 0 {
+			return "", fmt.Errorf("SPN login failed (HTTP %d): %w", code, err)
+		}
+		return "", fmt.Errorf("SPN login failed: %w", err)
+	}
+
+	if user.MayUseTheSPN() {
+		if err := config.SetConfigOption(captain.CfgOptionEnableSPNKey, true); err != nil {
+			return "", fmt.Errorf("logged in, but failed to enable SPN: %w", err)
+		}
+	}
+
+	data, err := json.Marshal(user)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode SPN profile: %w", err)
+	}
+	return string(data), nil
+}
+
+func SPNLogout() error {
+	return access.Logout(false, true)
+}
+
+func RefreshSPNUserProfile() (string, error) {
+	user, _, err := access.UpdateUser()
+	if err != nil {
+		return "", err
+	}
+	data, err := json.Marshal(user)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func GetSPNUserProfile() (string, error) {
+	user, err := access.GetUser()
+	if err != nil {
+		return "", err
+	}
+	data, err := json.Marshal(user)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func GetSPNStatus() (string, error) {
+	data, err := json.Marshal(captain.GetSPNStatus())
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func SetSPNEnabled(enabled bool) error {
+	return config.SetConfigOption(captain.CfgOptionEnableSPNKey, enabled)
+}
+
+// SetSPNExitCountry sets the global SPN exit-node policy. An empty country
+// restores automatic routing. A country code forces exits to that country.
+func SetSPNExitCountry(country string) error {
+	country = strings.ToUpper(strings.TrimSpace(country))
+	if country == "" {
+		return config.SetConfigOption(profile.CfgOptionExitHubPolicyKey, []string{})
+	}
+	if len(country) != 2 || country[0] < 'A' || country[0] > 'Z' ||
+		country[1] < 'A' || country[1] > 'Z' {
+		return fmt.Errorf("invalid ISO country code %q", country)
+	}
+	return config.SetConfigOption(
+		profile.CfgOptionExitHubPolicyKey,
+		[]string{"+ " + country, "- *"},
+	)
+}
+
+func GetSPNExitCountry() string {
+	rules := config.GetAsStringArray(profile.CfgOptionExitHubPolicyKey, []string{})()
+	for _, rule := range rules {
+		fields := strings.Fields(rule)
+		if len(fields) == 2 && fields[0] == "+" && len(fields[1]) == 2 {
+			return strings.ToUpper(fields[1])
+		}
+	}
+	return ""
+}
+
+func GetTunnelLastError() string {
+	return tunnel.LastError()
 }
 
 func GetLogs(ID int64) []logs.LogLine {
