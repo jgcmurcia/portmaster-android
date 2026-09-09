@@ -4,6 +4,8 @@ import { CommonModule, LocationStrategy } from '@angular/common';
 import { IonicModule } from '@ionic/angular';
 import { FormsModule } from '@angular/forms';
 import { SPNService } from '../lib/spn.service';
+import GoBridge from '../plugins/go.bridge';
+import JavaBridge from '../plugins/java.bridge';
 // import { SPNService } from '@safing/portmaster-api/src/lib/spn.service';
 
 
@@ -16,6 +18,7 @@ import { SPNService } from '../lib/spn.service';
 })
 export class LoginComponent {
   Error: string;
+  Loading: boolean = false;
   
   Username: string
   Password: string
@@ -30,15 +33,34 @@ export class LoginComponent {
   }
 
   login() {
+    if (this.Loading) {
+      return;
+    }
+    this.Error = "";
+    this.Loading = true;
+
     this.spnService.login({username: this.Username, password: this.Password})
-    .subscribe(
-      _ => {
-        this.location.back();
-      },
-      err => {
-        this.Error = err;
-      },
-    );
+      .subscribe({
+        next: async () => {
+          try {
+            if (!(await GoBridge.IsTunnelActive())) {
+              await GoBridge.EnableTunnel();
+            }
+          } finally {
+            this.Loading = false;
+            this.Password = "";
+            this.location.back();
+          }
+        },
+        error: err => {
+          this.Loading = false;
+          this.Error = err?.message || err?.errorMessage || String(err);
+        },
+      });
+  }
+
+  openSignup() {
+    JavaBridge.openUrlInBrowser({url: "https://account.safing.io/account/sign_up"});
   }
 
   async togglePasswordVisibility(): Promise<void> {
