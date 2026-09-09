@@ -69,3 +69,9 @@ require (
 	golang.org/x/tools v0.9.3 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
+
+// Portmaster Android's fdbased TUN integration predates stopfd. Newer gVisor
+// revisions pull in a Linux-only stopfd package and no longer cross-compile
+// through gomobile for Android. Keep the Android-compatible revision this
+// project originally declared.
+replace gvisor.dev/gvisor => gvisor.dev/gvisor v0.0.0-20220817001344-846276b3dbc5
