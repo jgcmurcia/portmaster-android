@@ -17,30 +17,46 @@ import { FormsModule } from '@angular/forms';
   imports: [CommonModule, IonicModule, FormsModule, SystemAppList]
 })
 export class EnabledAppsComponent implements OnInit {
-  AppList: Application[];
+  AppList: Application[] = [];
+  Loading: boolean = true;
+  Saving: boolean = false;
+  Error: string = "";
 
   ShowSystemApps: boolean = false;
 
   constructor(private locationStrategy: LocationStrategy) {}
 
-  ngOnInit() {
-    JavaBridge.getAppSettings().then((result) => {
-      this.AppList = result.apps;
-      this.AppList.sort((a, b) => a.name.localeCompare(b.name));
-    });
+  async ngOnInit() {
+    try {
+      const result = await JavaBridge.getAppSettings();
+      this.AppList = (result.apps || []).sort((a, b) => a.name.localeCompare(b.name));
+    } catch (err) {
+      this.Error = err?.message || String(err);
+    } finally {
+      this.Loading = false;
+    }
   }
 
-  Save() {
-    var packageNameList: string[] = [];
-    this.AppList.forEach(element => {
-      if(!element.enabled) {
-        packageNameList.push(element.packageName);
-      }
-    });
+  async Save() {
+    if (this.Saving) {
+      return;
+    }
+    this.Saving = true;
+    this.Error = "";
 
-    JavaBridge.setAppSettings({apps: packageNameList});
-    GoBridge.RestartTunnel();
-    this.locationStrategy.back()
+    const packageNameList = this.AppList
+      .filter(app => !app.enabled)
+      .map(app => app.packageName);
+
+    try {
+      await JavaBridge.setAppSettings({apps: packageNameList});
+      await GoBridge.RestartTunnel();
+      this.locationStrategy.back();
+    } catch (err) {
+      this.Error = err?.message || String(err);
+    } finally {
+      this.Saving = false;
+    }
   }
 
   Close() {
