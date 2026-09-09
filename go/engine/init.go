@@ -144,6 +144,14 @@ func SetServiceFunctions(functions app_interface.AppInterface) {
 	app_interface.SetServiceFunctions(functions)
 }
 
+// OnServiceStop is called for an intentional Android service shutdown.
+// The tunnel has already been torn down by the vpn-service manager, so only
+// remove the Java service reference. Treating this as a system failure causes
+// the old shutdown path to recurse and terminate the whole Android process.
+func OnServiceStop() {
+	app_interface.RemoveServiceFunctionReference()
+}
+
 func OnServiceDestroy() {
 	app_interface.RemoveServiceFunctionReference()
 	tunnel.SystemShutdown()
