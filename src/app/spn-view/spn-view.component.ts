@@ -28,8 +28,10 @@ export class SPNViewComponent implements OnInit, OnDestroy {
 
   SPNStatus: SPNStatus | null;
   IsGeoIPDataAvailable: boolean = false;
+  TunnelError: string = "";
 
   private resumeEventSubscription: Subscription;
+  private statusPoll: ReturnType<typeof setInterval> | null = null;
   
   public environmentInjector = inject(EnvironmentInjector);
 
@@ -68,11 +70,17 @@ export class SPNViewComponent implements OnInit, OnDestroy {
 
     this.EnableTunnelPopup();
     this.CheckGeoIPData();
+    this.refreshDirectStatus();
+    this.statusPoll = setInterval(() => this.refreshDirectStatus(), 2000);
 
   }
 
   ngOnDestroy() {
     this.resumeEventSubscription.unsubscribe();
+    if (this.statusPoll !== null) {
+      clearInterval(this.statusPoll);
+      this.statusPoll = null;
+    }
   }
 
   openUserInfo() {
@@ -83,8 +91,13 @@ export class SPNViewComponent implements OnInit, OnDestroy {
     }
   }
 
-  setSPNEnabled(v: boolean) {
-    this.configService.save(`spn/enable`, v).subscribe();
+  async setSPNEnabled(v: boolean) {
+    try {
+      await GoBridge.SetSPNEnabled(v);
+      await this.refreshDirectStatus();
+    } catch (err) {
+      console.error("Failed to change SPN state", err);
+    }
   }
 
   isSPNConnected(): boolean {
@@ -128,6 +141,31 @@ export class SPNViewComponent implements OnInit, OnDestroy {
         return;
       }
       GoBridge.Shutdown();
+    }
+  }
+
+  openAppsPage() {
+    this.router.navigate(["/menu/enabled-apps"]);
+  }
+
+  openRoutingPage() {
+    this.router.navigate(["/menu/spn-routing"]);
+  }
+
+  openVPNSettings() {
+    this.router.navigate(["/menu/vpn-settings"]);
+  }
+
+  private async refreshDirectStatus() {
+    try {
+      const rawStatus = await GoBridge.GetSPNStatus();
+      if (rawStatus) {
+        this.SPNStatus = JSON.parse(rawStatus) as SPNStatus;
+      }
+      this.TunnelError = await GoBridge.GetTunnelLastError();
+      this.changeDetector.detectChanges();
+    } catch (err) {
+      console.debug("Direct SPN status not ready", err);
     }
   }
 
