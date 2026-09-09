@@ -2,9 +2,11 @@ package tunnel
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"net"
 	"os"
+	"sync"
 	"syscall"
 
 	"github.com/safing/portbase/log"
@@ -21,12 +23,23 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/transport/udp"
 )
 
+const (
+	tunnelIPv4 = "100.127.247.245"
+	tunnelIPv4Prefix = 30
+	tunnelIPv6 = "fd00:1::1"
+	tunnelIPv6Prefix = 64
+	tunnelMTU = 1400
+)
+
 var (
 	netStack *stack.Stack
 	tunnelFD *os.File
 	module   *modules.Module
 
 	eventChannel chan string
+
+	stateLock       sync.RWMutex
+	tunnelLastError string
 )
 
 func init() {
@@ -35,27 +48,61 @@ func init() {
 	module.Enable()
 }
 
+func setLastError(err error) {
+	stateLock.Lock()
+	defer stateLock.Unlock()
+	if err == nil {
+		tunnelLastError = ""
+		return
+	}
+	tunnelLastError = err.Error()
+}
+
+// LastError returns the most recent TUN setup/reconnect error for the Android UI.
+func LastError() string {
+	stateLock.RLock()
+	defer stateLock.RUnlock()
+	return tunnelLastError
+}
+
 func start() error {
 	module.StartServiceWorker("vpn-service-manager", 0, func(ctx context.Context) error {
-		// Listen for new events.
 		for {
 			select {
 			case command := <-eventChannel:
 				switch command {
 				case "connect":
 					if !IsActive() {
-						setupTunnelInterface()
+						if err := setupTunnelInterface(); err != nil {
+							setLastError(err)
+							log.Errorf("vpn-service: failed to set up tunnel: %s", err)
+							continue
+						}
+						setLastError(nil)
 
-						// Sending command, so the app can run in the background
-						app_interface.SendServicesCommand("keep_alive")
+						// Keep Android's foreground VPN service alive only after
+						// the userspace network stack is ready.
+						if err := app_interface.SendServicesCommand("keep_alive"); err != nil {
+							log.Warningf("vpn-service: failed to send keep-alive: %s", err)
+						}
 					}
+
 				case "disconnect":
 					destroyTunnelInterface()
-					// Disable background service. When the app is killed everything will shutdown.
-					app_interface.SendServicesCommand("shutdown")
+					setLastError(nil)
+					if err := app_interface.SendServicesCommand("shutdown"); err != nil {
+						log.Warningf("vpn-service: failed to stop Android service: %s", err)
+					}
+
 				case "reconnect":
 					destroyTunnelInterface()
-					setupTunnelInterface()
+					if err := setupTunnelInterface(); err != nil {
+						setLastError(err)
+						log.Errorf("vpn-service: failed to reconnect tunnel: %s", err)
+						continue
+					}
+					setLastError(nil)
+
 				case "system-shutdown":
 					log.Errorf("vpn-service: the VPN service has stopped, restart the app to start it again.")
 					notification := &app_interface.Notification{
@@ -63,17 +110,17 @@ func start() error {
 					}
 					notification.Title = "The system stopped Portmaster"
 					notification.Message = "Tap here to restart it"
-					app_interface.ShowNotification(notification)
+					_ = app_interface.ShowNotification(notification)
 					destroyTunnelInterface()
-					app_interface.SendServicesCommand("shutdown")
-					err := app_interface.Shutdown()
-					if err != nil {
+					_ = app_interface.SendServicesCommand("shutdown")
+					if err := app_interface.Shutdown(); err != nil {
 						log.Errorf("vpn-service: failed to call activity shutdown: %s", err)
 					}
 				}
+
 			case <-ctx.Done():
 				destroyTunnelInterface()
-				app_interface.SendServicesCommand("shutdown")
+				_ = app_interface.SendServicesCommand("shutdown")
 				return nil
 			}
 		}
@@ -97,45 +144,91 @@ func SystemShutdown() {
 	eventChannel <- "system-shutdown"
 }
 
-// enableTunnel starts the tunneling.
-func setupTunnelInterface() {
-	// Request file descriptor from java
-	fd, err := app_interface.VPNInit()
-	if err != nil {
-		log.Errorf("vpn-service: failed to initialize file descriptor: %s", err)
-		return
+func makeProtocolAddress(address string, prefix int) (tcpip.ProtocolAddress, error) {
+	ip := net.ParseIP(address)
+	if ip == nil {
+		return tcpip.ProtocolAddress{}, fmt.Errorf("invalid tunnel IP %q", address)
 	}
 
+	if v4 := ip.To4(); v4 != nil {
+		return tcpip.ProtocolAddress{
+			Protocol: ipv4.ProtocolNumber,
+			AddressWithPrefix: tcpip.AddressWithPrefix{
+				Address:   tcpip.Address(v4),
+				PrefixLen: prefix,
+			},
+		}, nil
+	}
+
+	v6 := ip.To16()
+	if v6 == nil {
+		return tcpip.ProtocolAddress{}, fmt.Errorf("invalid IPv6 tunnel IP %q", address)
+	}
+	return tcpip.ProtocolAddress{
+		Protocol: ipv6.ProtocolNumber,
+		AddressWithPrefix: tcpip.AddressWithPrefix{
+			Address:   tcpip.Address(v6),
+			PrefixLen: prefix,
+		},
+	}, nil
+}
+
+// setupTunnelInterface establishes the Android TUN and attaches gVisor.
+//
+// Do not rediscover the TUN through java.net.NetworkInterface here. Android can
+// publish a newly established VpnService interface asynchronously. The old code
+// could therefore leave the OS VPN active while gVisor had no NIC addresses.
+// We created the TUN ourselves, so configure the exact same addresses directly.
+func setupTunnelInterface() (err error) {
+	if IsActive() {
+		return nil
+	}
+
+	fd, err := app_interface.VPNInit()
+	if err != nil {
+		return fmt.Errorf("initialize VPN file descriptor: %w", err)
+	}
 	if fd <= 0 {
-		log.Errorf("vpn-service: invalid tunnel file descriptor: %d", fd)
-		return
+		return fmt.Errorf("invalid tunnel file descriptor: %d", fd)
 	}
 
 	tunnelFD = os.NewFile(uintptr(fd), "tunnel")
 	if tunnelFD == nil {
-		log.Errorf("vpn-service: failed to wrap tunnel file descriptor: %d", fd)
-		return
+		return fmt.Errorf("wrap tunnel file descriptor %d", fd)
 	}
 
-	initializeRouter()
+	// Ensure any partial setup is torn down on every error path.
+	success := false
+	defer func() {
+		if success {
+			return
+		}
+		if netStack != nil {
+			netStack.Close()
+			netStack.Wait()
+			netStack = nil
+		}
+		if tunnelFD != nil {
+			_ = tunnelFD.Close()
+			tunnelFD = nil
+		}
+	}()
 
+	initializeRouter()
 	log.Info("vpn-service: initializing tunnel interface")
-	mtu := uint32(1400)
 
 	maddr, err := net.ParseMAC("aa:00:17:17:17:17")
 	if err != nil {
-		log.Errorf("vpn-service: invalid mac address")
+		return fmt.Errorf("invalid tunnel MAC address: %w", err)
 	}
 
-	// try to make the socket non-blocking
 	if err := syscall.SetNonblock(fd, true); err != nil {
-		log.Errorf("vpn-service: failed to set socket to non-blocking: %w", err)
-		return
+		return fmt.Errorf("set tunnel non-blocking: %w", err)
 	}
 
 	linkID, err := fdbased.New(&fdbased.Options{
 		FDs:            []int{fd},
-		MTU:            mtu,
+		MTU:            uint32(tunnelMTU),
 		EthernetHeader: false,
 		Address:        tcpip.LinkAddress(maddr),
 		ClosedFunc: func(err tcpip.Error) {
@@ -145,142 +238,102 @@ func setupTunnelInterface() {
 		},
 	})
 	if err != nil {
-		log.Errorf("vpn-service: failed to create linkID: %s", err)
-		return
+		return fmt.Errorf("create gVisor link endpoint: %s", err)
 	}
-
-	log.Infof("vpn-service: created LinkID: %+v", linkID)
 
 	nicID := tcpip.NICID(1)
+	newStack := stack.New(stack.Options{
+		NetworkProtocols: []stack.NetworkProtocolFactory{
+			ipv4.NewProtocol,
+			ipv6.NewProtocol,
+		},
+		TransportProtocols: []stack.TransportProtocolFactory{
+			tcp.NewProtocol,
+			udp.NewProtocol,
+			icmp.NewProtocol4,
+			icmp.NewProtocol6,
+		},
+	})
+	netStack = newStack
 
-	opts := stack.Options{
-		NetworkProtocols:   []stack.NetworkProtocolFactory{ipv4.NewProtocol, ipv6.NewProtocol},
-		TransportProtocols: []stack.TransportProtocolFactory{tcp.NewProtocol, udp.NewProtocol, icmp.NewProtocol4, icmp.NewProtocol6},
-	}
-
-	newStack := stack.New(opts)
-
-	// TODO (vladimir): do we need TCP SACK?
 	sackEnabledOpt := tcpip.TCPSACKEnabled(true)
-	tcpipErr := newStack.SetTransportProtocolOption(tcp.ProtocolNumber, &sackEnabledOpt)
-	if tcpipErr != nil {
-		log.Errorf("vpn-service: could not enable TCP SACK: %s", tcpipErr)
+	if tcpipErr := newStack.SetTransportProtocolOption(tcp.ProtocolNumber, &sackEnabledOpt); tcpipErr != nil {
+		return fmt.Errorf("enable TCP SACK: %s", tcpipErr)
 	}
 
-	//
-	// NIC Setup
-	//
-	if err := newStack.CreateNIC(nicID, linkID); err != nil {
-		log.Errorf("vpn-service: failed to create nic: %s", err)
-		return
+	if tcpipErr := newStack.CreateNIC(nicID, linkID); tcpipErr != nil {
+		return fmt.Errorf("create gVisor NIC: %s", tcpipErr)
 	}
 
 	newStack.SetSpoofing(nicID, true)
 	newStack.SetRouteTable([]tcpip.Route{
-		{
-			Destination: header.IPv4EmptySubnet,
-			NIC:         nicID,
-		},
-		{
-			Destination: header.IPv6EmptySubnet,
-			NIC:         nicID,
-		},
+		{Destination: header.IPv4EmptySubnet, NIC: nicID},
+		{Destination: header.IPv6EmptySubnet, NIC: nicID},
 	})
 
-	// Find Portmaster's own TUN by its configured address. Selecting the last
-	// interface named "tun*" can attach gVisor to another VPN/TUN on the device.
-	var tunnelInterface *app_interface.NetworkInterface
-	interfaces, err := app_interface.GetNetworkInterfaces()
-	if err != nil {
-		log.Errorf("vpn-service: failed to get network interfaces: %s", err)
-		return
-	}
-	for idx := range interfaces {
-		for _, addr := range interfaces[idx].Addresses {
-			if addr.Addr == "100.127.247.245" {
-				tunnelInterface = &interfaces[idx]
-				break
-			}
+	for _, spec := range []struct {
+		address string
+		prefix  int
+	}{
+		{tunnelIPv4, tunnelIPv4Prefix},
+		{tunnelIPv6, tunnelIPv6Prefix},
+	} {
+		protocolAddress, addrErr := makeProtocolAddress(spec.address, spec.prefix)
+		if addrErr != nil {
+			return addrErr
 		}
-		if tunnelInterface != nil {
-			break
-		}
-	}
-	if tunnelInterface == nil {
-		log.Errorf("vpn-service: Portmaster tunnel interface not found")
-		return
-	}
-
-	// Setting the IP4/6 addresses to the interface
-	if tunnelInterface != nil {
-		for _, addr := range tunnelInterface.GetProtocolAddresses() {
-			newStack.AddProtocolAddress(nicID, addr, stack.AddressProperties{
-				PEB:        stack.CanBePrimaryEndpoint, // zero value default
-				ConfigType: stack.AddressConfigStatic,  // zero value default
-			})
+		if tcpipErr := newStack.AddProtocolAddress(nicID, protocolAddress, stack.AddressProperties{
+			PEB:        stack.CanBePrimaryEndpoint,
+			ConfigType: stack.AddressConfigStatic,
+		}); tcpipErr != nil {
+			return fmt.Errorf("add tunnel address %s: %s", spec.address, tcpipErr)
 		}
 	}
 
-	if err := newStack.SetPromiscuousMode(nicID, true); err != nil {
-		log.Errorf("vpn-service: failed to enable promiscuous mode: %s", err)
-		return
+	if tcpipErr := newStack.SetPromiscuousMode(nicID, true); tcpipErr != nil {
+		return fmt.Errorf("enable promiscuous mode: %s", tcpipErr)
 	}
 
-	// newStack.AddTCPProbe(func(state *stack.TCPEndpointState) {
-	// 	log.Printf("spn: received probe: %+v", state.ID)
-	// })
-
-	// Setup TCP forwarding
-	// TODO (vladimir): Max in-flight is it to high?
 	tcpForwarder := tcp.NewForwarder(newStack, 0, 32, func(fr *tcp.ForwarderRequest) {
-		err := DefaultTCPRouting(fr)
-		if err != nil {
-			// log.Errorf("vpn-service: failed to route connection: %s", err)
+		if routeErr := DefaultTCPRouting(fr); routeErr != nil {
+			log.Debugf("vpn-service: TCP routing failed: %s", routeErr)
 			fr.Complete(true)
-		} else {
-			fr.Complete(false)
+			return
 		}
+		fr.Complete(false)
 	})
 	newStack.SetTransportProtocolHandler(tcp.ProtocolNumber, tcpForwarder.HandlePacket)
 
-	// Setup UDP forwarding
 	udpForwarder := udp.NewForwarder(newStack, func(fr *udp.ForwarderRequest) {
-		err := DefaultUDPRouting(newStack, fr)
-		if err != nil {
-			// log.Errorf("vpn-service: failed to route connection: %s", err)
+		if routeErr := DefaultUDPRouting(newStack, fr); routeErr != nil {
+			log.Debugf("vpn-service: UDP routing failed: %s", routeErr)
 		}
 	})
 	newStack.SetTransportProtocolHandler(udp.ProtocolNumber, udpForwarder.HandlePacket)
 
-	// newStack.SetICMPLimit(0)
-	// newStack.SetNICForwarding(nicID, ipv4.ProtocolNumber, true)
-
-	netStack = newStack
-
-	//InitializeResolver()
+	success = true
+	log.Info("vpn-service: tunnel interface ready")
+	return nil
 }
 
 func destroyTunnelInterface() {
-	log.Info("vpn-service: shuting down tunnel interface")
+	log.Info("vpn-service: shutting down tunnel interface")
 
-	// Close and wait for all connections to end
 	EndAllConnections()
 
-	// Close the gvisor net stack
 	if netStack != nil {
 		netStack.Close()
 		netStack.Wait()
 		netStack = nil
 	}
 
-	// Close the NIC file descriptor
 	if tunnelFD != nil {
 		_ = tunnelFD.Close()
 		tunnelFD = nil
 	}
 }
 
-// IsActive checks if the tunnel is initialized
+// IsActive checks if the userspace tunnel stack is fully initialized.
 func IsActive() bool {
 	return netStack != nil
 }
