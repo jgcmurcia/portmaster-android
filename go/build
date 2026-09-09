@@ -51,6 +51,8 @@ echo "Run the compiled binary with the -version flag to see the information incl
 BUILD_PATH="github.com/safing/portbase/info"
 
 set -e
+echo Applying Android compatibility patches...
+python3 compat/apply_portmaster_android_compat.py
 echo Generating binding...
 cd codegen 
 go run gen.go go.go java.go ts.go
