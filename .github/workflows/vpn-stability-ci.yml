@@ -31,8 +31,30 @@ jobs:
           for resource in             "intel/geoip/geoipv4.mmdb.gz"             "intel/geoip/geoipv6.mmdb.gz"             "intel/spn/main-intel.yaml"; do
             if ! grep -Fq "$resource" /tmp/intel-index.json; then
               echo "::error::Safing intel index no longer contains $resource"
-              echo "Available matching entries:"
-              grep -Eo '"[^"]*(geoip|spn)[^"]*"' /tmp/intel-index.json | head -100 || true
+              echo "Index size: $(wc -c </tmp/intel-index.json) bytes"
+              echo "Index prefix:"
+              head -c 3000 /tmp/intel-index.json || true
+              echo
+              echo "Strings containing geo/spn/intel:"
+              python3 - <<'PY' || true
+import json
+p="/tmp/intel-index.json"
+data=json.load(open(p))
+hits=[]
+def walk(x, path=""):
+    if isinstance(x, dict):
+        for k,v in x.items():
+            walk(v, f"{path}/{k}")
+    elif isinstance(x, list):
+        for i,v in enumerate(x):
+            walk(v, f"{path}/{i}")
+    elif isinstance(x, str):
+        s=(path+" "+x)
+        if any(q in s.lower() for q in ("geo", "spn", "intel", "mmdb")):
+            hits.append(s)
+walk(data)
+print("\n".join(hits[:250]))
+PY
               exit 1
             fi
             echo "OK $resource"
