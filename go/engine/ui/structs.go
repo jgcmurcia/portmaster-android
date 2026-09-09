@@ -1,24 +1,14 @@
 package ui
 
 import (
-	"fmt"
 	"net/http"
 
-	"github.com/safing/portbase/api"
-	"github.com/safing/portbase/log"
 	"github.com/safing/portmaster-android/go/engine"
 )
 
 type PluginCall = engine.PluginCall
 
-var (
-	Database api.DatabaseAPI
-	dbCall   PluginCall = nil
-)
-
-func init() {
-	Database = api.CreateDatabaseAPI(databaseSendFunction)
-}
+var dbCall PluginCall
 
 type Request = struct {
 	Method  string              `json:"method"`
@@ -52,11 +42,3 @@ func (w *ResponseWriter) WriteHeader(statusCode int) {
 	w.statusCode = statusCode
 }
 
-func databaseSendFunction(data []byte) {
-	if dbCall != nil {
-		err := dbCall.Notify("db_event", fmt.Sprintf(`{"data": %q}`, string(data)))
-		if err != nil {
-			log.Errorf("ui: failed to notify ui for db response: %s", err)
-		}
-	}
-}
