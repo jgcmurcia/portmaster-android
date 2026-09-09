@@ -22,29 +22,22 @@ jobs:
         run: |
           set -euo pipefail
           curl --fail --silent --show-error --max-time 20 https://api.account.safing.io/api/v1/health >/tmp/account-health
+          curl --fail --silent --show-error --max-time 30 https://updates.safing.io/all/intel/intel.json >/tmp/legacy-intel.json
+          curl --fail --silent --show-error --max-time 30 https://updates.safing.io/intel.v3.json >/tmp/intel-v3.json
 
           echo "Account health:"
           cat /tmp/account-health
           echo
 
-          echo "Checking the exact legacy updater endpoint used by Portmaster Android..."
-          if curl --fail --silent --show-error --max-time 30 https://updates.safing.io/all/intel/intel.json >/tmp/legacy-intel.json; then
-            echo "Legacy intel endpoint is still online."
-            echo "Legacy index size: $(wc -c </tmp/legacy-intel.json) bytes"
-            for token in "geoipv4" "geoipv6" "main-intel"; do
-              if ! grep -Fq "$token" /tmp/legacy-intel.json; then
-                echo "::error::Legacy intel index is online but missing $token"
-                head -c 4000 /tmp/legacy-intel.json || true
-                exit 1
-              fi
-              echo "OK legacy resource $token"
-            done
-          else
-            echo "::error::Legacy Safing intel endpoint used by this core is no longer available."
-            echo "Current v3 index follows:"
-            curl --fail --silent --show-error --max-time 30 https://updates.safing.io/intel.v3.json | head -c 5000 || true
-            exit 1
-          fi
+          # SPN map remains in the legacy index.
+          grep -Fq "all/intel/spn/main-intel.yaml" /tmp/legacy-intel.json
+          echo "OK legacy SPN main-intel"
+
+          # GeoIP moved to the v3 index. The Android compatibility shim imports
+          # these versions into the old resource IDs at runtime.
+          grep -Fq '"Filename": "geoipv4.mmdb"' /tmp/intel-v3.json
+          grep -Fq '"Filename": "geoipv6.mmdb"' /tmp/intel-v3.json
+          echo "OK current GeoIP v4/v6 artifacts"
 
       - name: Set up Java 17 for Android tools
         uses: actions/setup-java@v5
