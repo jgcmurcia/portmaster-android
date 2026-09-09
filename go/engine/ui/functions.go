@@ -1,13 +1,13 @@
 package ui
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
+	"time"
 
-	"github.com/safing/portbase/api"
 	"github.com/safing/portbase/log"
 	"github.com/safing/portmaster-android/go/app_interface"
 	"github.com/safing/portmaster-android/go/engine"
@@ -112,71 +112,100 @@ func PerformRequest(call PluginCall) {
 		return
 	}
 
-	// Parse json request.
 	var request Request
-	err = json.Unmarshal([]byte(requestJson), &request)
-	if err != nil {
+	if err := json.Unmarshal([]byte(requestJson), &request); err != nil {
 		log.Errorf("engine: failed to parse ui request: %s %q", err, requestJson)
 		call.Error(err.Error())
 		return
 	}
 
-	// Handle internal requests.
-	if strings.HasPrefix(request.Url, "internal:") {
-		var apiRequest = &api.Request{}
-		ctx := context.WithValue(context.Background(), api.RequestContextKey, apiRequest)
-
-		apiRequest.Request, err = http.NewRequestWithContext(ctx, request.Method, request.Url, strings.NewReader(request.Body))
-		if err != nil {
-			log.Errorf("engine: failed to create request: %s", err)
-			call.Error(err.Error())
-			return
-		}
-
-		// Copy headers
-		for key, values := range request.Headers {
-			for _, value := range values {
-				apiRequest.Request.Header.Add(key, value)
-			}
-		}
-
-		// Get service id
-		path := strings.TrimPrefix(apiRequest.Request.URL.Path, "/v1/")
-		endpoint, err := api.GetEndpointByPath(path)
-		if err != nil {
-			log.Errorf("engine: %s", err)
-			call.Error(err.Error())
-			return
-		}
-		apiRequest.HandlerCache = endpoint
-
-		// Call service
-		response := NewResponseWriter()
-		endpoint.ServeHTTP(response, apiRequest.Request)
-
-		log.Debugf("engine: http service response: %q %d", endpoint.Path, response.statusCode)
-		if response.statusCode < http.StatusBadRequest {
-			call.ResolveJson(fmt.Sprintf(`{"data": %q}`, response.body))
-		} else {
-			// Error if status code is >= 400 (BadRequest)
-			call.Error(response.body)
-		}
+	if !strings.HasPrefix(request.Url, "internal:") {
+		log.Errorf("Path not implemented for: %s", request.Url)
+		call.Error("Path not implemented")
 		return
 	}
 
-	// External paths are not implemented yet.
-	log.Errorf("Path not implemented for: %s", request.Url)
-	call.Error("Path not implemented")
-	return
+	// The Angular UI still uses the legacy internal:/v1/... namespace.
+	// Portbase 0.16+ exposes those endpoints under /api/v1/...
+	internalPath := strings.TrimPrefix(request.Url, "internal:")
+	if !strings.HasPrefix(internalPath, "/") {
+		internalPath = "/" + internalPath
+	}
+	switch {
+	case internalPath == "/v1":
+		internalPath = "/api/v1"
+	case strings.HasPrefix(internalPath, "/v1/"):
+		internalPath = "/api" + internalPath
+	}
+
+	targetURL := engine.InternalAPIBaseURL() + internalPath
+	client := &http.Client{Timeout: 30 * time.Second}
+	var response *http.Response
+
+	// During app startup the WebView can issue its first request just before
+	// Portbase's API worker has bound the loopback socket. Rebuild the request
+	// on every retry so POST/PUT bodies are never reused after a failed attempt.
+	for attempt := 0; attempt < 10; attempt++ {
+		httpRequest, requestErr := http.NewRequest(request.Method, targetURL, strings.NewReader(request.Body))
+		if requestErr != nil {
+			log.Errorf("engine: failed to create internal API request: %s", requestErr)
+			call.Error(requestErr.Error())
+			return
+		}
+		for key, values := range request.Headers {
+			for _, value := range values {
+				httpRequest.Header.Add(key, value)
+			}
+		}
+		httpRequest.Header.Set(engine.InternalAPIAuthHeader, engine.InternalAPIToken())
+
+		response, err = client.Do(httpRequest)
+		if err == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if err != nil {
+		log.Errorf("engine: internal API request failed: %s", err)
+		call.Error(err.Error())
+		return
+	}
+	defer response.Body.Close()
+
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		log.Errorf("engine: failed to read internal API response: %s", err)
+		call.Error(err.Error())
+		return
+	}
+
+	log.Debugf("engine: internal API response: %s %d", internalPath, response.StatusCode)
+	if response.StatusCode < http.StatusBadRequest {
+		call.ResolveJson(fmt.Sprintf(`{"data": %q}`, string(body)))
+		return
+	}
+
+	errorBody := strings.TrimSpace(string(body))
+	if errorBody == "" {
+		errorBody = response.Status
+	}
+	call.Error(errorBody)
 }
 
 func DatabaseMessage(msg string) {
-	Database.Handle([]byte(msg))
+	if err := databaseSendMessage(msg); err != nil {
+		log.Errorf("ui: failed to send database message: %s", err)
+	}
 }
 
 func SubscribeToDatabase(call PluginCall) {
+	if err := ensureDatabaseBridge(); err != nil {
+		call.Error(err.Error())
+		return
+	}
+
 	call.KeepAlive(true)
-	dbCall = call
+	setDatabaseCall(call)
 	call.Resolve()
 }
 

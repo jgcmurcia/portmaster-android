@@ -40,19 +40,34 @@ func (i *NetworkInterface) setFlagsValue() {
 func (i *NetworkInterface) GetProtocolAddresses() []tcpip.ProtocolAddress {
 	var addresses []tcpip.ProtocolAddress
 	for _, a := range i.Addresses {
+		parsed := net.ParseIP(a.Addr)
+		if parsed == nil {
+			continue
+		}
 
-		protocolAddress := tcpip.ProtocolAddress{
+		var raw net.IP
+		var protocol tcpip.NetworkProtocolNumber
+		if a.IsIPv6 {
+			raw = parsed.To16()
+			protocol = ipv6.ProtocolNumber
+		} else {
+			raw = parsed.To4()
+			protocol = ipv4.ProtocolNumber
+		}
+		if raw == nil {
+			continue
+		}
+
+		addresses = append(addresses, tcpip.ProtocolAddress{
+			Protocol: protocol,
 			AddressWithPrefix: tcpip.AddressWithPrefix{
-				Address:   tcpip.Address(a.Addr),
+				// This gVisor version stores network addresses as a string of raw
+				// bytes. Casting the textual IP (for example "10.0.0.1") creates
+				// an invalid 8-byte address; convert the parsed IP bytes instead.
+				Address:   tcpip.Address(raw),
 				PrefixLen: a.PrefixLength,
 			},
-		}
-		if a.IsIPv6 {
-			protocolAddress.Protocol = ipv6.ProtocolNumber
-		} else {
-			protocolAddress.Protocol = ipv4.ProtocolNumber
-		}
-		addresses = append(addresses, protocolAddress)
+		})
 	}
 	return addresses
 }

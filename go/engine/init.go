@@ -1,7 +1,13 @@
 package engine
 
 import (
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"fmt"
+	"net"
+	"net/http"
+	"sync"
 
 	"github.com/safing/portbase/api"
 	_ "github.com/safing/portbase/database/storage/bbolt"
@@ -29,6 +35,10 @@ import (
 const (
 	StableApplicationID = "io.safing.portmaster.android"
 	BetaApplicationID   = "io.safing.portmaster.android.beta"
+
+	// InternalAPIAuthHeader authenticates the embedded WebView with the local
+	// Portmaster API. The value is generated randomly for every process.
+	InternalAPIAuthHeader = "X-Portmaster-Android-Token"
 )
 
 var (
@@ -36,6 +46,11 @@ var (
 	dataRoot *utils.DirStructure
 
 	engineInitialized abool.AtomicBool
+
+	internalAPIOnce    sync.Once
+	internalAPIErr     error
+	internalAPIBaseURL string
+	internalAPIToken   string
 )
 
 func OnCreate(appDir string) {
@@ -57,8 +72,15 @@ func OnCreate(appDir string) {
 	// Get application data dir. Were the application has access to write and read.
 	dataDir = appDir
 
-	// Disable HTTP server.
-	api.EnableServer = false
+	// Portbase 0.16+ routes API requests through its HTTP/WebSocket router.
+	// Keep it on an ephemeral loopback-only port and require a per-process
+	// random token for protected endpoints. This lets Android use the supported
+	// API path without exposing Portmaster's administrative API to other apps.
+	if err := configureInternalAPI(); err != nil {
+		log.Errorf("engine: failed to configure internal API: %s", err)
+		engineInitialized.UnSet()
+		return
+	}
 
 	// Enable SPN client.
 	conf.EnableClient(true)
@@ -95,6 +117,56 @@ func OnCreate(appDir string) {
 	go func() {
 		_ = run.Run()
 	}()
+}
+
+// InternalAPIBaseURL returns the process-local Portmaster HTTP endpoint.
+func InternalAPIBaseURL() string {
+	return internalAPIBaseURL
+}
+
+// InternalAPIToken returns the per-process secret used by the Android bridge.
+func InternalAPIToken() string {
+	return internalAPIToken
+}
+
+func configureInternalAPI() error {
+	internalAPIOnce.Do(func() {
+		// Reserve an available loopback port. Closing the probe listener before
+		// Portbase starts has a tiny race window, but avoids a fixed global port
+		// and greatly reduces conflicts with other Android applications.
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			internalAPIErr = fmt.Errorf("allocate loopback API port: %w", err)
+			return
+		}
+		address := listener.Addr().String()
+		if err := listener.Close(); err != nil {
+			internalAPIErr = fmt.Errorf("release loopback API probe: %w", err)
+			return
+		}
+
+		tokenBytes := make([]byte, 32)
+		if _, err := rand.Read(tokenBytes); err != nil {
+			internalAPIErr = fmt.Errorf("generate internal API token: %w", err)
+			return
+		}
+		internalAPIToken = hex.EncodeToString(tokenBytes)
+		internalAPIBaseURL = "http://" + address
+
+		api.EnableServer = true
+		api.SetDefaultAPIListenAddress(address)
+		internalAPIErr = api.SetAuthenticator(func(r *http.Request, _ *http.Server) (*api.AuthToken, error) {
+			supplied := r.Header.Get(InternalAPIAuthHeader)
+			if subtle.ConstantTimeCompare([]byte(supplied), []byte(internalAPIToken)) != 1 {
+				return nil, fmt.Errorf("Portmaster Android internal API authentication failed: %w", api.ErrAPIAccessDeniedMessage)
+			}
+			return &api.AuthToken{
+				Read:  api.PermitSelf,
+				Write: api.PermitSelf,
+			}, nil
+		})
+	})
+	return internalAPIErr
 }
 
 // OnDestroy shutdown module system and calls System.exit(0)
@@ -142,6 +214,14 @@ func OnActivityDestroy() {
 
 func SetServiceFunctions(functions app_interface.AppInterface) {
 	app_interface.SetServiceFunctions(functions)
+}
+
+// OnServiceStop is called for an intentional Android service shutdown.
+// The tunnel has already been torn down by the vpn-service manager, so only
+// remove the Java service reference. Treating this as a system failure causes
+// the old shutdown path to recurse and terminate the whole Android process.
+func OnServiceStop() {
+	app_interface.RemoveServiceFunctionReference()
 }
 
 func OnServiceDestroy() {

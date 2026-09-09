@@ -1,0 +1,96 @@
+name: VPN stability build
+
+on:
+  push:
+    branches:
+      - fix/rethink-vpn-stability
+  pull_request:
+    branches:
+      - develop
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17 for Android tools
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.20"
+          cache-dependency-path: go/go.sum
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: npm
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      # AGP 7.2.x in this legacy project was built around JDK 11. Keep the
+      # modern sdkmanager on JDK 17, then switch back for the actual build.
+      - name: Set up Java 11 for legacy Android build
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "11"
+
+      - name: Install pinned gomobile toolchain
+        working-directory: go
+        run: |
+          MOBILE_VERSION=v0.0.0-20230531173138-3c911d8e3eda
+          go install golang.org/x/mobile/cmd/gomobile@${MOBILE_VERSION}
+          go install golang.org/x/mobile/cmd/gobind@${MOBILE_VERSION}
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Resolve Go module graph
+        working-directory: go
+        run: |
+          go mod download
+          go mod download golang.org/x/mobile
+          go list -f '{{.Dir}}' golang.org/x/mobile/bind
+
+      - name: Build Go Android bindings
+        working-directory: go
+        env:
+          BUILD_COMMIT: ${{ github.sha }}
+          BUILD_USER: github-actions
+          BUILD_HOST: github-actions
+          BUILD_DATE: ${{ github.event.repository.updated_at }}
+          BUILD_SOURCE: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          mkdir -p ../android/app/libs
+          chmod +x ./build
+          ./build
+
+      - name: Install web dependencies
+        run: npm ci
+
+      - name: Build web UI
+        run: npm run build -- --configuration production
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: portmaster-android-vpn-stability-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
