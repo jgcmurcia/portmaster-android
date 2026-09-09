@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/safing/portbase/api"
 	_ "github.com/safing/portbase/database/storage/bbolt"
