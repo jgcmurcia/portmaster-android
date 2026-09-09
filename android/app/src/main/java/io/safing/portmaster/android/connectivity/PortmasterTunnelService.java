@@ -182,7 +182,15 @@ public class PortmasterTunnelService extends VpnService {
   @Override
   public void onRevoke() {
     Log.w(TAG, "VPN permission revoked; tearing down tunnel");
+    gracefulShutdown = true;
+    tunnelRequested = false;
+    networkHandler.removeCallbacks(reconnectTunnel);
+
+    // Let the serialized Go tunnel manager close gVisor and the TUN first.
+    // Keep a fallback stop in case there is no Activity available to send the
+    // normal shutdown command back to this service.
     Tunnel.disable();
+    networkHandler.postDelayed(this::stopSelf, 1000L);
   }
 
   public int InitVPN() {
