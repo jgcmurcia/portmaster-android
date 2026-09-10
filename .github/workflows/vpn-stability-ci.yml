@@ -11,7 +11,7 @@ on:
 jobs:
   build-android:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
 
     steps:
       - name: Checkout
@@ -29,12 +29,9 @@ jobs:
           cat /tmp/account-health
           echo
 
-          # SPN map remains in the legacy index.
           grep -Fq "all/intel/spn/main-intel.yaml" /tmp/legacy-intel.json
           echo "OK legacy SPN main-intel"
 
-          # GeoIP moved to the v3 index. The Android compatibility shim imports
-          # these versions into the old resource IDs at runtime.
           grep -Fq '"Filename": "geoipv4.mmdb"' /tmp/intel-v3.json
           grep -Fq '"Filename": "geoipv6.mmdb"' /tmp/intel-v3.json
           echo "OK current GeoIP v4/v6 artifacts"
@@ -60,8 +57,6 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      # AGP 7.2.x in this legacy project was built around JDK 11. Keep the
-      # modern sdkmanager on JDK 17, then switch back for the actual build.
       - name: Set up Java 11 for legacy Android build
         uses: actions/setup-java@v5
         with:
@@ -96,8 +91,22 @@ jobs:
           chmod +x ./build
           ./build
 
+      - name: Audit reachable Go vulnerabilities
+        working-directory: go
+        shell: bash
+        run: |
+          set -o pipefail
+          go install golang.org/x/vuln/cmd/govulncheck@v1.0.4
+          "$(go env GOPATH)/bin/govulncheck" ./... | tee /tmp/govulncheck.txt
+
       - name: Install web dependencies
         run: npm ci
+
+      - name: Audit production web dependencies
+        shell: bash
+        run: |
+          set -o pipefail
+          npm audit --omit=dev --audit-level=critical | tee /tmp/npm-audit-production.txt
 
       - name: Build web UI
         run: npm run build -- --configuration production
