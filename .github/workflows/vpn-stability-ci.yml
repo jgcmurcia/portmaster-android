@@ -85,9 +85,13 @@ jobs:
 
       - name: Resolve Go module graph
         working-directory: go
+        shell: bash
         run: |
+          set -euo pipefail
           go mod download
           go list -m all >/tmp/go-modules.txt
+          cp go.mod /tmp/go.mod.resolved
+          cp go.sum /tmp/go.sum.resolved
 
       - name: Build Go Android bindings
         working-directory: go
@@ -103,6 +107,8 @@ jobs:
           ./build
 
       - name: Audit exact Android Go binary
+        id: govuln
+        continue-on-error: true
         working-directory: go
         shell: bash
         run: |
@@ -111,12 +117,27 @@ jobs:
           rm -rf /tmp/golib-audit
           mkdir -p /tmp/golib-audit
           unzip -q ../android/app/libs/golib.aar 'jni/arm64-v8a/libgojni.so' -d /tmp/golib-audit
-          "$(go env GOPATH)/bin/govulncheck" -mode=binary /tmp/golib-audit/jni/arm64-v8a/libgojni.so | tee /tmp/govulncheck.txt
+
+          # Record which compiled dependency directly imports legacy OpenPGP.
+          # This is provenance for GO-2026-5932 and helps us remove it instead
+          # of silently allowlisting an unmaintained cryptographic package.
+          go list -deps -f '{{.ImportPath}}|{{join .Imports ","}}' ./... \
+            | grep 'golang.org/x/crypto/openpgp' \
+            | tee /tmp/openpgp-importers.txt || true
+
+          set +e
+          "$(go env GOPATH)/bin/govulncheck" -show verbose -mode=binary /tmp/golib-audit/jni/arm64-v8a/libgojni.so \
+            | tee /tmp/govulncheck.txt
+          status=${PIPESTATUS[0]}
+          set -e
+          exit "$status"
 
       - name: Install web dependencies
         run: npm ci
 
       - name: Audit production web dependencies
+        id: npmaudit
+        continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
@@ -150,7 +171,10 @@ jobs:
           path: |
             /tmp/govulncheck.txt
             /tmp/npm-audit-production.txt
+            /tmp/openpgp-importers.txt
             /tmp/go-modules.txt
+            /tmp/go.mod.resolved
+            /tmp/go.sum.resolved
             android/app/build/reports/lint-results-debug.html
             android/app/build/reports/lint-results-debug.txt
           if-no-files-found: ignore
@@ -165,3 +189,19 @@ jobs:
             android/app/build/outputs/apk/debug/app-debug.apk.sha256
           if-no-files-found: error
           retention-days: 14
+
+      - name: Enforce security audit gate
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          failed=0
+          if [ "${{ steps.govuln.outcome }}" != "success" ]; then
+            echo "govulncheck gate failed"
+            failed=1
+          fi
+          if [ "${{ steps.npmaudit.outcome }}" != "success" ]; then
+            echo "production npm audit gate failed"
+            failed=1
+          fi
+          exit "$failed"
