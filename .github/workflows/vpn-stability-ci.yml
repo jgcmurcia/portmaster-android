@@ -118,16 +118,13 @@ jobs:
           mkdir -p /tmp/golib-audit
           unzip -q ../android/app/libs/golib.aar 'jni/arm64-v8a/libgojni.so' -d /tmp/golib-audit
 
-          # Query only the packages that gomobile binds. The compat directory
-          # deliberately contains source stubs for different upstream package
-          # names, so ./... is not a valid package query here.
-          go list -deps -f '{{.ImportPath}}|{{join .Imports ","}}' \
-            github.com/safing/portmaster-android/go/engine \
-            github.com/safing/portmaster-android/go/engine/ui/exported \
-            github.com/safing/portmaster-android/go/engine/tunnel \
-            github.com/safing/portmaster-android/go/app_interface \
-            | grep 'golang.org/x/crypto/openpgp' \
-            | tee /tmp/openpgp-importers.txt || true
+          # The module-cache grep is intentionally independent from go list:
+          # the build updates a legacy module graph at runtime and some sums are
+          # only materialized inside gomobile's temporary module. This still
+          # gives exact source-level provenance for any OpenPGP import.
+          grep -RIn --include='*.go' \
+            'golang.org/x/crypto/openpgp' "$(go env GOMODCACHE)" \
+            | tee /tmp/openpgp-importer-files.txt || true
 
           set +e
           "$(go env GOPATH)/bin/govulncheck" -show verbose -mode=binary /tmp/golib-audit/jni/arm64-v8a/libgojni.so \
@@ -140,6 +137,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Do not let the Angular 16 lock graph constrain resolution of the
+          # intentionally upgraded Angular 20 manifest.
+          rm -f package-lock.json
           npm install --package-lock-only --ignore-scripts
           cp package-lock.json /tmp/package-lock.resolved.json
 
@@ -182,7 +182,7 @@ jobs:
           path: |
             /tmp/govulncheck.txt
             /tmp/npm-audit-production.txt
-            /tmp/openpgp-importers.txt
+            /tmp/openpgp-importer-files.txt
             /tmp/go-modules.txt
             /tmp/go.mod.resolved
             /tmp/go.sum.resolved
