@@ -40,12 +40,18 @@ func initializeRouter() {
 func initializeDialer() {
 	dialerNotTunneled = net.Dialer{
 		Control: func(network, address string, c syscall.RawConn) error {
-			c.Control(func(fd uintptr) {
-				err := app_interface.SetDefaultInterfaceForSocket(fd)
-				if err != nil {
-					log.Errorf("tunnel: failed to disable tunnel for connection: %s", err)
-				}
-			})
+			var protectErr error
+			if err := c.Control(func(fd uintptr) {
+				protectErr = app_interface.SetDefaultInterfaceForSocket(fd)
+			}); err != nil {
+				return fmt.Errorf("access socket control for %s: %w", address, err)
+			}
+			if protectErr != nil {
+				// Never open an outbound socket unless Android confirmed that it is
+				// excluded from this VpnService. Otherwise the socket can recurse
+				// into our own TUN or escape routing assumptions.
+				return fmt.Errorf("protect outbound socket for %s: %w", address, protectErr)
+			}
 			return nil
 		},
 	}
@@ -158,15 +164,19 @@ func DefaultTCPRouting(fr *tcp.ForwarderRequest) error {
 	ipAddress := net.IP(fr.ID().LocalAddress)
 	scope := netutils.GetIPScope(ipAddress)
 
-	// Exception for the spn connection
+	// SPN's own control/bootstrap connections must leave on the protected
+	// physical socket or the overlay could recursively route through itself.
 	if captain.IsExcepted(ipAddress) {
 		return routeTCPThroughDefaultInterface(fr)
 	}
 
-	if scope == netutils.Global {
-		if isSpnEnabled() && captain.ClientReady() {
-			return routeTCPThroughSPN(fr)
+	if scope == netutils.Global && isSpnEnabled() {
+		if !captain.ClientReady() {
+			// Privacy invariant: once the user enabled SPN, never silently fall
+			// back to the real Internet path while SPN is reconnecting or failed.
+			return fmt.Errorf("SPN is enabled but not ready; blocking TCP connection to %s", ipAddress)
 		}
+		return routeTCPThroughSPN(fr)
 	}
 
 	return routeTCPThroughDefaultInterface(fr)
@@ -187,12 +197,19 @@ func getUidOfTCPRequest(fr *tcp.ForwarderRequest) (int, error) {
 
 func DefaultUDPRouting(stack *stack.Stack, fr *udp.ForwarderRequest) error {
 	ipAddress := net.IP(fr.ID().LocalAddress)
-
 	scope := netutils.GetIPScope(ipAddress)
-	if scope == netutils.Global {
-		if isSpnEnabled() && captain.ClientReady() {
-			return routeUDPThroughSPN(stack, fr)
+
+	// Apply the same recursion exception to UDP. SPN transports may use UDP and
+	// must be able to reach their bootstrap/home-hub endpoints outside the TUN.
+	if captain.IsExcepted(ipAddress) {
+		return routeUDPThroughDefaultInterface(stack, fr)
+	}
+
+	if scope == netutils.Global && isSpnEnabled() {
+		if !captain.ClientReady() {
+			return fmt.Errorf("SPN is enabled but not ready; blocking UDP connection to %s", ipAddress)
 		}
+		return routeUDPThroughSPN(stack, fr)
 	}
 
 	return routeUDPThroughDefaultInterface(stack, fr)
@@ -222,6 +239,8 @@ func DefaultUDPRouting(stack *stack.Stack, fr *udp.ForwarderRequest) error {
 // 			c.Write(response)
 // 		}
 // 		// packet := gopacket.NewPacket(frame[:n], layers.LayerTypeDNS, gopacket.Default)
+
+// 		// dns, _ := packet.Layer(layers.DNS)
 
 // 		// dns, _ := packet.Layer(layers.LayerTypeDNS).(*layers.DNS)
 
