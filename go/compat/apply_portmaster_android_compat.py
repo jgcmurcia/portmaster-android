@@ -87,8 +87,8 @@ if "verifyAndroidGeoIPHash(resource, unpacked)" not in geoip_source:
 geoip_db.write_text(geoip_source)
 
 # Portbase 0.16.6 predates Go's final slices.SortFunc API. The old comparator
-# returned bool; Go 1.26 requires a three-way int comparator. Patch the module
-# cache so legacy updater behavior remains identical on the modern toolchain.
+# returned bool; Go 1.26 requires a three-way int comparator and can infer the
+# slice/element generic types from the arguments.
 portbase_dir = Path(subprocess.check_output(
     ["go", "list", "-m", "-f", "{{.Dir}}", "github.com/safing/portbase"],
     cwd=root,
@@ -105,7 +105,7 @@ old_sort = """	slices.SortFunc[*ResourceVersion](toUpdate, func(a, b *ResourceVe
 		return a.resource.Identifier < b.resource.Identifier
 	})
 """
-new_sort = """	slices.SortFunc[*ResourceVersion](toUpdate, func(a, b *ResourceVersion) int {
+new_sort = """	slices.SortFunc(toUpdate, func(a, b *ResourceVersion) int {
 		if a.resource.Identifier < b.resource.Identifier {
 			return -1
 		}
@@ -114,7 +114,7 @@ new_sort = """	slices.SortFunc[*ResourceVersion](toUpdate, func(a, b *ResourceVe
 		}
 		return 0
 	})
-	slices.SortFunc[*ResourceVersion](missingSigs, func(a, b *ResourceVersion) int {
+	slices.SortFunc(missingSigs, func(a, b *ResourceVersion) int {
 		if a.resource.Identifier < b.resource.Identifier {
 			return -1
 		}
