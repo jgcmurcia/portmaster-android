@@ -24,11 +24,11 @@ import (
 )
 
 const (
-	tunnelIPv4 = "100.127.247.245"
+	tunnelIPv4       = "100.127.247.245"
 	tunnelIPv4Prefix = 30
-	tunnelIPv6 = "fd00:1::1"
+	tunnelIPv6       = "fd00:1::1"
 	tunnelIPv6Prefix = 64
-	tunnelMTU = 1400
+	tunnelMTU        = 1400
 )
 
 var (
@@ -38,12 +38,13 @@ var (
 
 	eventChannel chan string
 
+	stackLock       sync.RWMutex
 	stateLock       sync.RWMutex
 	tunnelLastError string
 )
 
 func init() {
-	eventChannel = make(chan string, 8)
+	eventChannel = make(chan string, 32)
 	module = modules.Register("vpn-service", nil, start, nil, "base")
 	module.Enable()
 }
@@ -65,6 +66,20 @@ func LastError() string {
 	return tunnelLastError
 }
 
+func setActiveStack(s *stack.Stack) {
+	stackLock.Lock()
+	netStack = s
+	stackLock.Unlock()
+}
+
+func takeActiveStack() *stack.Stack {
+	stackLock.Lock()
+	s := netStack
+	netStack = nil
+	stackLock.Unlock()
+	return s
+}
+
 func start() error {
 	module.StartServiceWorker("vpn-service-manager", 0, func(ctx context.Context) error {
 		for {
@@ -76,6 +91,12 @@ func start() error {
 						if err := setupTunnelInterface(); err != nil {
 							setLastError(err)
 							log.Errorf("vpn-service: failed to set up tunnel: %s", err)
+							// The TUN file descriptor has already been closed by the
+							// failed setup path. Do not leave an Android foreground
+							// service running and visually suggesting protection.
+							if stopErr := app_interface.SendServicesCommand("shutdown"); stopErr != nil {
+								log.Warningf("vpn-service: failed to stop service after TUN setup failure: %s", stopErr)
+							}
 							continue
 						}
 						setLastError(nil)
@@ -99,23 +120,21 @@ func start() error {
 					if err := setupTunnelInterface(); err != nil {
 						setLastError(err)
 						log.Errorf("vpn-service: failed to reconnect tunnel: %s", err)
+						if stopErr := app_interface.SendServicesCommand("shutdown"); stopErr != nil {
+							log.Warningf("vpn-service: failed to stop service after reconnect failure: %s", stopErr)
+						}
 						continue
 					}
 					setLastError(nil)
 
 				case "system-shutdown":
 					log.Errorf("vpn-service: the VPN service has stopped, restart the app to start it again.")
-					notification := &app_interface.Notification{
-						ID: rand.Int31(),
-					}
+					notification := &app_interface.Notification{ID: rand.Int31()}
 					notification.Title = "The system stopped Portmaster"
 					notification.Message = "Tap here to restart it"
 					_ = app_interface.ShowNotification(notification)
 					destroyTunnelInterface()
 					_ = app_interface.SendServicesCommand("shutdown")
-					if err := app_interface.Shutdown(); err != nil {
-						log.Errorf("vpn-service: failed to call activity shutdown: %s", err)
-					}
 				}
 
 			case <-ctx.Done():
@@ -137,7 +156,14 @@ func Disable() {
 }
 
 func Reconnect() {
-	eventChannel <- "reconnect"
+	// Network callbacks can arrive in bursts. A reconnect is idempotent and
+	// already rebuilds the complete stack, so coalesce bursts rather than ever
+	// blocking Android's callback/main thread on a full Go channel.
+	select {
+	case eventChannel <- "reconnect":
+	default:
+		log.Debug("vpn-service: reconnect already queued; coalescing network event")
+	}
 }
 
 func SystemShutdown() {
@@ -197,16 +223,17 @@ func setupTunnelInterface() (err error) {
 		return fmt.Errorf("wrap tunnel file descriptor %d", fd)
 	}
 
-	// Ensure any partial setup is torn down on every error path.
+	var newStack *stack.Stack
+	// Ensure any partial setup is torn down on every error path. The stack is
+	// published to IsActive() only after all addresses/forwarders are installed.
 	success := false
 	defer func() {
 		if success {
 			return
 		}
-		if netStack != nil {
-			netStack.Close()
-			netStack.Wait()
-			netStack = nil
+		if newStack != nil {
+			newStack.Close()
+			newStack.Wait()
 		}
 		if tunnelFD != nil {
 			_ = tunnelFD.Close()
@@ -242,7 +269,7 @@ func setupTunnelInterface() (err error) {
 	}
 
 	nicID := tcpip.NICID(1)
-	newStack := stack.New(stack.Options{
+	newStack = stack.New(stack.Options{
 		NetworkProtocols: []stack.NetworkProtocolFactory{
 			ipv4.NewProtocol,
 			ipv6.NewProtocol,
@@ -254,7 +281,6 @@ func setupTunnelInterface() (err error) {
 			icmp.NewProtocol6,
 		},
 	})
-	netStack = newStack
 
 	sackEnabledOpt := tcpip.TCPSACKEnabled(true)
 	if tcpipErr := newStack.SetTransportProtocolOption(tcp.ProtocolNumber, &sackEnabledOpt); tcpipErr != nil {
@@ -311,6 +337,7 @@ func setupTunnelInterface() (err error) {
 	})
 	newStack.SetTransportProtocolHandler(udp.ProtocolNumber, udpForwarder.HandlePacket)
 
+	setActiveStack(newStack)
 	success = true
 	log.Info("vpn-service: tunnel interface ready")
 	return nil
@@ -321,10 +348,9 @@ func destroyTunnelInterface() {
 
 	EndAllConnections()
 
-	if netStack != nil {
-		netStack.Close()
-		netStack.Wait()
-		netStack = nil
+	if s := takeActiveStack(); s != nil {
+		s.Close()
+		s.Wait()
 	}
 
 	if tunnelFD != nil {
@@ -335,5 +361,7 @@ func destroyTunnelInterface() {
 
 // IsActive checks if the userspace tunnel stack is fully initialized.
 func IsActive() bool {
+	stackLock.RLock()
+	defer stackLock.RUnlock()
 	return netStack != nil
 }
