@@ -118,16 +118,18 @@ jobs:
           mkdir -p /tmp/golib-audit
           unzip -q ../android/app/libs/golib.aar 'jni/arm64-v8a/libgojni.so' -d /tmp/golib-audit
 
-          # The module-cache grep is intentionally independent from go list:
-          # the build updates a legacy module graph at runtime and some sums are
-          # only materialized inside gomobile's temporary module. This still
-          # gives exact source-level provenance for any OpenPGP import.
-          grep -RIn --include='*.go' \
-            'golang.org/x/crypto/openpgp' "$(go env GOMODCACHE)" \
-            | tee /tmp/openpgp-importer-files.txt || true
+          # Materialize any missing sums and print only direct importers of
+          # OpenPGP from the packages that gomobile actually binds.
+          go list -deps -mod=mod -f '{{.ImportPath}}|{{join .Imports ","}}' \
+            github.com/safing/portmaster-android/go/engine \
+            github.com/safing/portmaster-android/go/engine/ui/exported \
+            github.com/safing/portmaster-android/go/engine/tunnel \
+            github.com/safing/portmaster-android/go/app_interface \
+            | grep 'golang.org/x/crypto/openpgp' \
+            | tee /tmp/openpgp-importers.txt || true
 
           set +e
-          "$(go env GOPATH)/bin/govulncheck" -show verbose -mode=binary /tmp/golib-audit/jni/arm64-v8a/libgojni.so \
+          "$(go env GOPATH)/bin/govulncheck" -show traces -mode=binary /tmp/golib-audit/jni/arm64-v8a/libgojni.so \
             | tee /tmp/govulncheck.txt
           status=${PIPESTATUS[0]}
           set -e
@@ -182,7 +184,7 @@ jobs:
           path: |
             /tmp/govulncheck.txt
             /tmp/npm-audit-production.txt
-            /tmp/openpgp-importer-files.txt
+            /tmp/openpgp-importers.txt
             /tmp/go-modules.txt
             /tmp/go.mod.resolved
             /tmp/go.sum.resolved
