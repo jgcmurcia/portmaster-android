@@ -2,10 +2,10 @@
 from pathlib import Path
 import shutil
 import subprocess
-import sys
 
 root = Path(__file__).resolve().parents[1]
 compat = root / "compat" / "portmaster_updates_android_compat.go"
+geoip_compat = root / "compat" / "portmaster_geoip_android_compat.go"
 pm_dir = Path(subprocess.check_output(
     ["go", "list", "-m", "-f", "{{.Dir}}", "github.com/safing/portmaster"],
     cwd=root,
@@ -54,6 +54,38 @@ if source.count("injectAndroidGeoIPCompat(registry)") < 2:
     source = source.replace(update_anchor, update_replacement, 1)
 
 main.write_text(source)
+
+# Verify unpacked MMDB data against the SHA-256 from the current v3 index before
+# maxminddb opens it. This closes the legacy updater's unsigned-Intel gap.
+geoip_dir = pm_dir / "intel" / "geoip"
+geoip_db = geoip_dir / "database.go"
+geoip_dir.chmod(geoip_dir.stat().st_mode | 0o200)
+geoip_db.chmod(geoip_db.stat().st_mode | 0o200)
+shutil.copyfile(geoip_compat, geoip_dir / "android_compat.go")
+geoip_source = geoip_db.read_text()
+verify_anchor = """	unpacked, err := f.Unpack(".gz", updater.UnpackGZIP)
+	if err != nil {
+		return nil, "", fmt.Errorf("unpacking file: %w", err)
+	}
+
+	return f, unpacked, nil
+"""
+verify_replacement = """	unpacked, err := f.Unpack(".gz", updater.UnpackGZIP)
+	if err != nil {
+		return nil, "", fmt.Errorf("unpacking file: %w", err)
+	}
+	if err := verifyAndroidGeoIPHash(resource, unpacked); err != nil {
+		return nil, "", fmt.Errorf("verifying file: %w", err)
+	}
+
+	return f, unpacked, nil
+"""
+if "verifyAndroidGeoIPHash(resource, unpacked)" not in geoip_source:
+    if verify_anchor not in geoip_source:
+        raise SystemExit("could not locate GeoIP unpack anchor")
+    geoip_source = geoip_source.replace(verify_anchor, verify_replacement, 1)
+geoip_db.write_text(geoip_source)
+
 # Ensure the SPN captain cannot race the updater on a clean Android install.
 spn_dir = Path(subprocess.check_output(
     ["go", "list", "-m", "-f", "{{.Dir}}", "github.com/safing/spn"],
@@ -73,4 +105,5 @@ elif captain_replacement not in captain_source:
 captain_module.write_text(captain_source)
 
 print(f"patched Portmaster updater at {pm_dir}")
+print(f"patched Portmaster GeoIP verification at {geoip_dir}")
 print(f"patched SPN captain startup ordering at {spn_dir}")
