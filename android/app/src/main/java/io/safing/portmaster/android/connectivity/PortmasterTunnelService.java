@@ -63,7 +63,7 @@ public class PortmasterTunnelService extends VpnService {
 
   private final Handler networkHandler = new Handler(Looper.getMainLooper());
   private final Object networkLock = new Object();
-  private final Set<Network> underlyingNetworks = new LinkedHashSet<>();
+  private final Set<Network> physicalNetworks = new LinkedHashSet<>();
   private volatile boolean tunnelRequested = false;
   private volatile boolean gracefulShutdown = false;
 
@@ -80,7 +80,7 @@ public class PortmasterTunnelService extends VpnService {
     }
 
     synchronized (networkLock) {
-      if (underlyingNetworks.isEmpty()) {
+      if (physicalNetworks.isEmpty()) {
         Log.i(TAG, "network handoff pending: no physical network available; keeping VPN fail-closed");
         return;
       }
@@ -206,9 +206,6 @@ public class PortmasterTunnelService extends VpnService {
     synchronized (this) {
       ParcelFileDescriptor fd = builder.establish();
       if (fd != null) {
-        synchronized (networkLock) {
-          publishUnderlyingNetworksLocked();
-        }
         return fd.detachFd();
       }
     }
@@ -226,8 +223,7 @@ public class PortmasterTunnelService extends VpnService {
 
     boolean changed;
     synchronized (networkLock) {
-      changed = underlyingNetworks.add(network);
-      publishUnderlyingNetworksLocked();
+      changed = physicalNetworks.add(network);
     }
 
     if (changed && tunnelRequested) {
@@ -239,27 +235,15 @@ public class PortmasterTunnelService extends VpnService {
     boolean changed;
     boolean anyRemaining;
     synchronized (networkLock) {
-      changed = underlyingNetworks.remove(network);
-      anyRemaining = !underlyingNetworks.isEmpty();
-      publishUnderlyingNetworksLocked();
+      changed = physicalNetworks.remove(network);
+      anyRemaining = !physicalNetworks.isEmpty();
     }
 
-    // If another physical network is already present, rebuild immediately onto
-    // it. If none remain, keep the established TUN up and fail-closed until a
-    // new underlay arrives; onCapabilitiesChanged will then trigger reconnect.
+    // Protected Go sockets intentionally follow Android's current default
+    // physical network; they are not bound to a specific Network object. The
+    // callback set is therefore used only to detect handoffs/reconnect SPN.
     if (changed && anyRemaining && tunnelRequested) {
       scheduleTunnelReconnect();
-    }
-  }
-
-  private void publishUnderlyingNetworksLocked() {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) {
-      return;
-    }
-
-    Network[] networks = underlyingNetworks.toArray(new Network[0]);
-    if (!setUnderlyingNetworks(networks)) {
-      Log.w(TAG, "Android rejected VPN underlying-network update");
     }
   }
 
@@ -327,7 +311,7 @@ public class PortmasterTunnelService extends VpnService {
         NetworkCapabilities capabilities = connectivityManager.getNetworkCapabilities(active);
         if (capabilities == null || !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
           synchronized (networkLock) {
-            underlyingNetworks.add(active);
+            physicalNetworks.add(active);
           }
         }
       }
@@ -365,10 +349,7 @@ public class PortmasterTunnelService extends VpnService {
     }
 
     synchronized (networkLock) {
-      underlyingNetworks.clear();
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
-        setUnderlyingNetworks(null);
-      }
+      physicalNetworks.clear();
     }
   }
 }
