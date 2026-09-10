@@ -1,10 +1,12 @@
 package updates
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/safing/portbase/updater"
@@ -12,18 +14,44 @@ import (
 
 const androidIntelV3URL = "https://updates.safing.io/intel.v3.json"
 
+type androidIntelV3Artifact struct {
+	Filename string   `json:"Filename"`
+	SHA256   string   `json:"SHA256"`
+	URLs     []string `json:"URLs"`
+	Unpack   string   `json:"Unpack"`
+	Version  string   `json:"Version"`
+}
+
 type androidIntelV3Index struct {
-	Artifacts []struct {
-		Filename string
-		Version  string
-	} `json:"Artifacts"`
+	Artifacts []androidIntelV3Artifact `json:"Artifacts"`
+}
+
+var (
+	androidGeoIPHashMu sync.RWMutex
+	androidGeoIPHashes = map[string]string{}
+)
+
+// AndroidGeoIPExpectedSHA256 returns the SHA-256 published by Safing's current
+// Intel index for the unpacked MMDB corresponding to a legacy resource ID.
+func AndroidGeoIPExpectedSHA256(resource string) string {
+	identifier := strings.TrimPrefix(resource, "all/")
+	androidGeoIPHashMu.RLock()
+	hash := androidGeoIPHashes[identifier]
+	androidGeoIPHashMu.RUnlock()
+	return hash
+}
+
+func setAndroidGeoIPExpectedSHA256(resource, digest string) {
+	identifier := strings.TrimPrefix(resource, "all/")
+	androidGeoIPHashMu.Lock()
+	androidGeoIPHashes[identifier] = strings.ToLower(digest)
+	androidGeoIPHashMu.Unlock()
 }
 
 // injectAndroidGeoIPCompat bridges the current Safing v3 Intel index into the
-// legacy updater identifiers used by Portmaster/SPN 2023.
-//
-// Safing still hosts the versioned .mmdb.gz files at the exact URL that the
-// legacy updater generates. Only the old intel.json entries were removed.
+// legacy updater identifiers used by Portmaster/SPN 2023. The actual unpacked
+// file hash is verified by the Android geoip compatibility hook before MMDB is
+// opened.
 func injectAndroidGeoIPCompat(reg *updater.ResourceRegistry) error {
 	client := &http.Client{Timeout: 20 * time.Second}
 	resp, err := client.Get(androidIntelV3URL)
@@ -37,7 +65,8 @@ func injectAndroidGeoIPCompat(reg *updater.ResourceRegistry) error {
 	}
 
 	var index androidIntelV3Index
-	if err := json.NewDecoder(resp.Body).Decode(&index); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(nil, resp.Body, 2<<20))
+	if err := decoder.Decode(&index); err != nil {
 		return fmt.Errorf("decode current Safing intel index: %w", err)
 	}
 
@@ -58,10 +87,29 @@ func injectAndroidGeoIPCompat(reg *updater.ResourceRegistry) error {
 		if !ok {
 			continue
 		}
+
 		version := strings.TrimSpace(artifact.Version)
+		digest := strings.TrimSpace(artifact.SHA256)
 		if version == "" {
 			return fmt.Errorf("Safing intel artifact %s has no version", artifact.Filename)
 		}
+		decodedDigest, err := hex.DecodeString(digest)
+		if err != nil || len(decodedDigest) != 32 {
+			return fmt.Errorf("Safing intel artifact %s has invalid SHA-256", artifact.Filename)
+		}
+		if artifact.Unpack != "gz" {
+			return fmt.Errorf("Safing intel artifact %s changed unpack format to %q", artifact.Filename, artifact.Unpack)
+		}
+		if len(artifact.URLs) == 0 {
+			return fmt.Errorf("Safing intel artifact %s has no download URL", artifact.Filename)
+		}
+		for _, artifactURL := range artifact.URLs {
+			if !strings.HasPrefix(artifactURL, "https://updates.safing.io/") {
+				return fmt.Errorf("Safing intel artifact %s contains unexpected URL %q", artifact.Filename, artifactURL)
+			}
+		}
+
+		setAndroidGeoIPExpectedSHA256(identifier, digest)
 		if err := reg.AddResource(identifier, version, compatIndex, false, true, false); err != nil {
 			return fmt.Errorf("register Android compat resource %s: %w", identifier, err)
 		}
