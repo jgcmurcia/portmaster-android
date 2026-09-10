@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -20,6 +21,22 @@ import (
 	"github.com/safing/spn/captain"
 )
 
+const (
+	maxInternalRequestJSON = 2 << 20
+	maxInternalRequestBody = 1 << 20
+	maxInternalResponse    = 2 << 20
+)
+
+var allowedInternalPostPaths = map[string]struct{}{
+	"/api/v1/core/restart":           {},
+	"/api/v1/core/shutdown":          {},
+	"/api/v1/updates/check":          {},
+	"/api/v1/ui/reload":              {},
+	"/api/v1/dns/clear":              {},
+	"/api/v1/broadcasts/reset-state": {},
+	"/api/v1/spn/reinit":             {},
+}
+
 // Functions that have PluginCall as an argument are automatically exposed to the ionic UI
 
 func IsTunnelActive() bool {
@@ -27,8 +44,9 @@ func IsTunnelActive() bool {
 }
 
 func EnableTunnel() {
-	// Send request to the VPN Service, with will notify the module.
-	app_interface.SendServicesCommand("keep_alive")
+	if err := app_interface.SendServicesCommand("keep_alive"); err != nil {
+		log.Errorf("ui: failed to start VPN service: %s", err)
+	}
 }
 
 func RestartTunnel() {
@@ -145,9 +163,12 @@ func GetDebugInfoFile() {
 	log.Infof("engine: exporting debug info")
 	debugInfo, err := logs.GetDebugInfo("github")
 	if err != nil {
+		log.Errorf("ui: failed to build debug info: %s", err)
 		return
 	}
-	_ = app_interface.ExportDebugInfo("PortmasterDebugInfo.txt", debugInfo)
+	if err := app_interface.ExportDebugInfo("PortmasterDebugInfo.txt", debugInfo); err != nil {
+		log.Errorf("ui: failed to export debug info: %s", err)
+	}
 }
 
 func GetDebugInfo() (string, error) {
@@ -167,20 +188,19 @@ func CreateIssue(debugInfo string, genUrl bool, issueRequestStr string) (string,
 		return "", fmt.Errorf("failed to parse issueRequest object: %s", err)
 	}
 
-	// Upload debug info to private bin
 	if debugInfo != "" {
-		debugInfoUrl, err := bug_report.UploadToPrivateBin("debug-info", debugInfo)
+		debugInfoURL, err := bug_report.UploadToPrivateBin("debug-info", debugInfo)
 		if err != nil {
 			return "", fmt.Errorf("failed to upload debug info: %s", err)
 		}
-		issueRequest.DebugInfoUrl = debugInfoUrl
+		issueRequest.DebugInfoUrl = debugInfoURL
 	}
 
-	url, err := bug_report.CreateIssue(&issueRequest, "portmaster-android", "report-bug.md", genUrl)
+	issueURL, err := bug_report.CreateIssue(&issueRequest, "portmaster-android", "report-bug.md", genUrl)
 	if err != nil {
 		return "", fmt.Errorf("failed to create issue: %s", err)
 	}
-	return url, nil
+	return issueURL, nil
 }
 
 func CreateTicket(debugInfo string, ticketRequestStr string) error {
@@ -190,13 +210,12 @@ func CreateTicket(debugInfo string, ticketRequestStr string) error {
 		return fmt.Errorf("failed to parse ticketRequest object: %s", err)
 	}
 
-	// Upload debug info to private bin
 	if debugInfo != "" {
-		debugInfoUrl, err := bug_report.UploadToPrivateBin("debug-info", debugInfo)
+		debugInfoURL, err := bug_report.UploadToPrivateBin("debug-info", debugInfo)
 		if err != nil {
 			return fmt.Errorf("failed to upload debug info: %s", err)
 		}
-		ticketRequest.DebugInfoUrl = debugInfoUrl
+		ticketRequest.DebugInfoUrl = debugInfoURL
 	}
 
 	return bug_report.CreateTicket(&ticketRequest)
@@ -211,28 +230,33 @@ func NewApkAvaliable() bool {
 }
 
 func PerformRequest(call PluginCall) {
-	// Parameter requestJson.
-	requestJson, err := call.GetString("requestJson")
+	requestJSON, err := call.GetString("requestJson")
 	if err != nil {
 		call.Error("missing requestJson argument")
 		return
 	}
+	if len(requestJSON) > maxInternalRequestJSON {
+		call.Error("internal API request is too large")
+		return
+	}
 
 	var request Request
-	if err := json.Unmarshal([]byte(requestJson), &request); err != nil {
-		log.Errorf("engine: failed to parse ui request: %s %q", err, requestJson)
-		call.Error(err.Error())
+	if err := json.Unmarshal([]byte(requestJSON), &request); err != nil {
+		// Never log the raw request. It can contain sensitive configuration data.
+		log.Errorf("engine: failed to parse ui request: %s", err)
+		call.Error("invalid internal API request")
 		return
 	}
 
+	if len(request.Body) > maxInternalRequestBody {
+		call.Error("internal API request body is too large")
+		return
+	}
 	if !strings.HasPrefix(request.Url, "internal:") {
-		log.Errorf("Path not implemented for: %s", request.Url)
-		call.Error("Path not implemented")
+		call.Error("internal API path required")
 		return
 	}
 
-	// The Angular UI still uses the legacy internal:/v1/... namespace.
-	// Portbase 0.16+ exposes those endpoints under /api/v1/...
 	internalPath := strings.TrimPrefix(request.Url, "internal:")
 	if !strings.HasPrefix(internalPath, "/") {
 		internalPath = "/" + internalPath
@@ -244,22 +268,35 @@ func PerformRequest(call PluginCall) {
 		internalPath = "/api" + internalPath
 	}
 
-	targetURL := engine.InternalAPIBaseURL() + internalPath
+	parsedPath, err := url.ParseRequestURI(internalPath)
+	if err != nil || parsedPath.IsAbs() || parsedPath.Host != "" {
+		call.Error("invalid internal API path")
+		return
+	}
+	if strings.ToUpper(request.Method) != http.MethodPost {
+		call.Error("internal API method is not allowed")
+		return
+	}
+	if _, ok := allowedInternalPostPaths[parsedPath.Path]; !ok {
+		log.Warningf("ui: blocked legacy internal API path %s", parsedPath.Path)
+		call.Error("internal API path is not allowed")
+		return
+	}
+
+	targetURL := engine.InternalAPIBaseURL() + parsedPath.RequestURI()
 	client := &http.Client{Timeout: 30 * time.Second}
 	var response *http.Response
 
-	// During app startup the WebView can issue its first request just before
-	// Portbase's API worker has bound the loopback socket. Rebuild the request
-	// on every retry so POST/PUT bodies are never reused after a failed attempt.
 	for attempt := 0; attempt < 10; attempt++ {
-		httpRequest, requestErr := http.NewRequest(request.Method, targetURL, strings.NewReader(request.Body))
+		httpRequest, requestErr := http.NewRequest(http.MethodPost, targetURL, strings.NewReader(request.Body))
 		if requestErr != nil {
-			log.Errorf("engine: failed to create internal API request: %s", requestErr)
-			call.Error(requestErr.Error())
+			call.Error("failed to create internal API request")
 			return
 		}
-		for key, values := range request.Headers {
-			for _, value := range values {
+
+		// Do not forward arbitrary WebView-controlled hop-by-hop/auth headers.
+		for _, key := range []string{"Accept", "Content-Type"} {
+			for _, value := range request.Headers[key] {
 				httpRequest.Header.Add(key, value)
 			}
 		}
@@ -273,19 +310,22 @@ func PerformRequest(call PluginCall) {
 	}
 	if err != nil {
 		log.Errorf("engine: internal API request failed: %s", err)
-		call.Error(err.Error())
+		call.Error("internal API request failed")
 		return
 	}
 	defer response.Body.Close()
 
-	body, err := io.ReadAll(response.Body)
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxInternalResponse+1))
 	if err != nil {
-		log.Errorf("engine: failed to read internal API response: %s", err)
-		call.Error(err.Error())
+		call.Error("failed to read internal API response")
+		return
+	}
+	if len(body) > maxInternalResponse {
+		call.Error("internal API response is too large")
 		return
 	}
 
-	log.Debugf("engine: internal API response: %s %d", internalPath, response.StatusCode)
+	log.Debugf("engine: internal API response: %s %d", parsedPath.Path, response.StatusCode)
 	if response.StatusCode < http.StatusBadRequest {
 		call.ResolveJson(fmt.Sprintf(`{"data": %q}`, string(body)))
 		return
@@ -294,6 +334,9 @@ func PerformRequest(call PluginCall) {
 	errorBody := strings.TrimSpace(string(body))
 	if errorBody == "" {
 		errorBody = response.Status
+	}
+	if len(errorBody) > 2048 {
+		errorBody = errorBody[:2048]
 	}
 	call.Error(errorBody)
 }
