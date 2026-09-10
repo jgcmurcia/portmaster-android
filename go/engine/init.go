@@ -127,8 +127,9 @@ func OnCreate(appDir string) {
 	logs.InitLogs()
 
 	go func() {
-		if err := run.Run(); err != nil {
-			log.Errorf("engine: Portmaster module system stopped with error: %s", err)
+		exitCode := run.Run()
+		if exitCode != 0 {
+			log.Errorf("engine: Portmaster module system stopped with exit code %d", exitCode)
 		}
 	}()
 
