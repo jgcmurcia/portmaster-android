@@ -199,9 +199,6 @@ func networkProtocolForPacket(packet []byte) (tcpip.NetworkProtocolNumber, bool)
 	}
 }
 
-// startTUNBridge connects Android's layer-3 TUN descriptor to gVisor's portable
-// channel endpoint. This deliberately avoids gVisor's fdbased endpoint: modern
-// fdbased is Linux-host specific and is not a supported Android GOOS surface.
 func startTUNBridge(ctx context.Context, file *os.File, endpoint *channel.Endpoint) {
 	go func() {
 		buf := make([]byte, 65535)
@@ -358,10 +355,12 @@ func setupTunnelInterface() (err error) {
 	})
 	newStack.SetTransportProtocolHandler(tcp.ProtocolNumber, tcpForwarder.HandlePacket)
 
-	udpForwarder := udp.NewForwarder(newStack, func(fr *udp.ForwarderRequest) {
-		if routeErr := DefaultUDPRouting(newStack, fr); routeErr != nil {
+	udpForwarder := udp.NewForwarder(newStack, func(fr *udp.ForwarderRequest) bool {
+		if routeErr := DefaultUDPRouting(fr); routeErr != nil {
 			log.Debugf("vpn-service: UDP routing failed: %s", routeErr)
+			return false
 		}
+		return true
 	})
 	newStack.SetTransportProtocolHandler(udp.ProtocolNumber, udpForwarder.HandlePacket)
 
