@@ -70,13 +70,11 @@ public class JavaBridge extends Plugin {
     try {
       List<String> apps = array.toList();
       for (String packageName : apps) {
-        if (packageName == null || packageName.isBlank()) {
+        if (packageName == null || packageName.trim().isEmpty()) {
           call.reject("Invalid empty package name");
           return;
         }
 
-        // Only persist a bypass for a package that actually exists. This keeps
-        // malformed/untrusted bridge input from accumulating arbitrary entries.
         try {
           pm.getApplicationInfo(packageName, 0);
         } catch (PackageManager.NameNotFoundException e) {
