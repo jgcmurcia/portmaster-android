@@ -15,7 +15,6 @@ import (
 	"github.com/safing/spn/captain"
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
-	"gvisor.dev/gvisor/pkg/tcpip/stack"
 	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
 	"gvisor.dev/gvisor/pkg/tcpip/transport/udp"
 	"gvisor.dev/gvisor/pkg/waiter"
@@ -77,7 +76,7 @@ func routeTCPThroughSPN(fr *tcp.ForwarderRequest) error {
 	return nil
 }
 
-func routeUDPThroughSPN(stack *stack.Stack, fr *udp.ForwarderRequest) error {
+func routeUDPThroughSPN(fr *udp.ForwarderRequest) error {
 	ipVersion := packet.IPv4
 	if strings.Contains(fr.ID().LocalAddress.String(), ":") {
 		ipVersion = packet.IPv6
@@ -90,7 +89,7 @@ func routeUDPThroughSPN(stack *stack.Stack, fr *udp.ForwarderRequest) error {
 	if err != nil {
 		return fmt.Errorf("failed to create endpoint for: %s", err)
 	}
-	systemConn := gonet.NewUDPConn(stack, &wq, ep)
+	systemConn := gonet.NewUDPConn(&wq, ep)
 	addSPNConnection(systemConn, localAddr, remoteAddr)
 	return nil
 }
@@ -105,7 +104,7 @@ func routeTCPThroughDefaultInterface(fr *tcp.ForwarderRequest) error {
 	var wq waiter.Queue
 	ep, err := fr.CreateEndpoint(&wq)
 	if err != nil {
-		remoteConn.Close()
+		_ = remoteConn.Close()
 		return fmt.Errorf("failed to create endpoint for remote %s: %s", remote, err)
 	}
 	systemConn := gonet.NewTCPConn(&wq, ep)
@@ -113,7 +112,7 @@ func routeTCPThroughDefaultInterface(fr *tcp.ForwarderRequest) error {
 	return nil
 }
 
-func routeUDPThroughDefaultInterface(stack *stack.Stack, fr *udp.ForwarderRequest) error {
+func routeUDPThroughDefaultInterface(fr *udp.ForwarderRequest) error {
 	remote := fmt.Sprintf("%s:%d", fr.ID().LocalAddress.String(), fr.ID().LocalPort)
 	remoteConn, udpErr := dialerNotTunneled.Dial("udp", remote)
 	if udpErr != nil {
@@ -123,10 +122,10 @@ func routeUDPThroughDefaultInterface(stack *stack.Stack, fr *udp.ForwarderReques
 	var wq waiter.Queue
 	ep, err := fr.CreateEndpoint(&wq)
 	if err != nil {
-		remoteConn.Close()
+		_ = remoteConn.Close()
 		return fmt.Errorf("failed to create endpoint for remote %s: %s", remote, err)
 	}
-	systemConn := gonet.NewUDPConn(stack, &wq, ep)
+	systemConn := gonet.NewUDPConn(&wq, ep)
 	addDefaultConnection(systemConn, remoteConn, ep)
 	return nil
 }
@@ -148,28 +147,28 @@ func DefaultTCPRouting(fr *tcp.ForwarderRequest) error {
 
 func getUidOfTCPRequest(fr *tcp.ForwarderRequest) (int, error) {
 	conn := app_interface.Connection{
-		Protocol:  6,
-		LocalIP:   gvisorIP(fr.ID().RemoteAddress),
-		LocalPort: int(fr.ID().RemotePort),
-		RemoteIP:  gvisorIP(fr.ID().LocalAddress),
+		Protocol:   6,
+		LocalIP:    gvisorIP(fr.ID().RemoteAddress),
+		LocalPort:  int(fr.ID().RemotePort),
+		RemoteIP:   gvisorIP(fr.ID().LocalAddress),
 		RemotePort: int(fr.ID().LocalPort),
 	}
 	return app_interface.GetConnectionOwner(conn)
 }
 
-func DefaultUDPRouting(stack *stack.Stack, fr *udp.ForwarderRequest) error {
+func DefaultUDPRouting(fr *udp.ForwarderRequest) error {
 	ipAddress := gvisorIP(fr.ID().LocalAddress)
 	scope := netutils.GetIPScope(ipAddress)
 	if captain.IsExcepted(ipAddress) {
-		return routeUDPThroughDefaultInterface(stack, fr)
+		return routeUDPThroughDefaultInterface(fr)
 	}
 	if scope == netutils.Global && isSpnEnabled() {
 		if !captain.ClientReady() {
 			return fmt.Errorf("SPN is enabled but not ready; blocking UDP connection to %s", ipAddress)
 		}
-		return routeUDPThroughSPN(stack, fr)
+		return routeUDPThroughSPN(fr)
 	}
-	return routeUDPThroughDefaultInterface(stack, fr)
+	return routeUDPThroughDefaultInterface(fr)
 }
 
 func EndAllConnections() {
