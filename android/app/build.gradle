@@ -4,7 +4,6 @@ android {
   compileSdk 33
   defaultConfig {
         applicationId "io.safing.portmaster.android"
-        minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         minSdkVersion 29
         versionCode 5
@@ -47,19 +46,19 @@ dependencies {
     implementation "androidx.core:core:1.6.0"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
-    implementation fileTree(include: ['*.jar'], dir: 'libs')
     implementation 'org.glassfish:javax.annotation:10.0-b28'
     implementation 'com.github.spullara.mustache.java:compiler:0.9.10'
-    implementation 'org.mockito:mockito-core:4.9.0'
     implementation 'com.fasterxml.jackson.core:jackson-annotations:2.14.1'
     implementation 'com.fasterxml.jackson.core:jackson-core:2.14.1'
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.14.1'
     implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-cbor:2.14.1'
-    testImplementation "junit:junit:$junitVersion"
-    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
-    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
     implementation (name:'golib', ext:'aar') { changing = true }
+
+    testImplementation "junit:junit:$junitVersion"
+    testImplementation 'org.mockito:mockito-core:4.9.0'
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
 }
 
 apply from: 'capacitor.build.gradle'
