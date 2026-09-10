@@ -73,14 +73,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # This x/mobile revision includes the 2026 fix that emits unversioned
-          # replace directives in gomobile's generated module, so our pinned
-          # gVisor replacement survives MVS correctly on modern Go.
           MOBILE_VERSION=1769bbc171f0a7eed0c9d32d907d176fe9dff510
           go install golang.org/x/mobile/cmd/gomobile@${MOBILE_VERSION}
           go install golang.org/x/mobile/cmd/gobind@${MOBILE_VERSION}
+          # Modern gomobile requires x/mobile to be part of the module's tool
+          # graph. Pin exactly the same revision used for the binaries above.
+          go get -tool golang.org/x/mobile/cmd/gobind@${MOBILE_VERSION}
+          go mod download golang.org/x/mobile
+          go list -m golang.org/x/mobile
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-          gomobile version || true
 
       - name: Resolve Go module graph
         working-directory: go
