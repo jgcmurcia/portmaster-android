@@ -2,6 +2,8 @@ module github.com/safing/portmaster-android/go
 
 go 1.26.3
 
+tool golang.org/x/mobile/cmd/gobind
+
 require (
 	github.com/fxamacker/cbor v1.5.1
 	github.com/fxamacker/cbor/v2 v2.4.0
