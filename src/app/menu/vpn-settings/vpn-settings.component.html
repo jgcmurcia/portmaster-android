@@ -1,43 +1,36 @@
 <ion-header>
   <ion-toolbar>
-    <ion-title>System Settings Guide</ion-title>
+    <ion-title>VPN Protection</ion-title>
   </ion-toolbar>
 </ion-header>
 <ion-content class="ion-padding">
   <p style="text-align:center">
-  To be protected at all times, quickly make sure Portmaster is always on:
+    For continuous protection, configure Android's system VPN safeguards for Portmaster.
   </p>
   <ion-slides pager="true">
     <ion-slide>
       <div class="slide">
         <img class="slide-image" src="../../assets/main-vpn-settings.jpg" />
-        
         <ion-label>
           <b>1.</b> Tap the <ion-icon name="settings-outline"></ion-icon> next to Portmaster.
         </ion-label>
-        <br>
-        <br>
-        <br>
-        <br>
-        <br>
-        <br>
-        <br>
+        <br><br><br><br><br><br><br>
       </div>
     </ion-slide>
     <ion-slide>
       <div class="slide">
         <img class="slide-image" src="../../assets/always-on-setting.jpg" />
-        <b>2.</b> Enable "Always-on VPN". This makes sure Portmaster is always running, even after a restart.
+        <b>2.</b> Enable "Always-on VPN" so Android restarts Portmaster after reboot or unexpected service termination.
       </div>
     </ion-slide>
     <ion-slide>
       <div class="slide">
         <img class="slide-image" src="../../assets/block-connections-setting.jpg" />
-        <b>Optional:</b> For further privacy, enable "Block connections without VPN". This setting prevents any connections from accessing the Internet outside of Portmaster. Even those excluded in "Apps Settings".
+        <b>Strongly recommended for leak protection:</b> enable "Block connections without VPN". This is Android's system-level kill switch: if Portmaster is not established, Android blocks network access instead of silently falling back to your real connection. Apps deliberately excluded from Portmaster may also lose network access while lockdown is enabled.
       </div>
     </ion-slide>
   </ion-slides>
   <ion-list style="text-align:center">
-    <ion-button (click)="openSystemVPNSettings()">Configure Now</ion-button>
+    <ion-button (click)="openSystemVPNSettings()">Open Android VPN Settings</ion-button>
   </ion-list>
 </ion-content>
