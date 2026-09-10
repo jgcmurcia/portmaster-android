@@ -10,7 +10,7 @@ import { Router, RouterModule } from '@angular/router';
   templateUrl: './menu.component.html',
   styleUrls: ['./menu.component.scss'],
   standalone: true,
-  imports: [CommonModule, IonicModule, FormsModule ]
+  imports: [CommonModule, IonicModule, FormsModule, RouterModule ]
 })
 export class MenuComponent {
   constructor(private router: Router) {}

@@ -24,6 +24,7 @@ import android.util.Log;
 import androidx.core.app.NotificationCompat;
 
 import java.net.DatagramSocket;
+import java.util.LinkedHashSet;
 import java.util.Set;
 
 import engine.Engine;
@@ -62,7 +63,7 @@ public class PortmasterTunnelService extends VpnService {
 
   private final Handler networkHandler = new Handler(Looper.getMainLooper());
   private final Object networkLock = new Object();
-  private Network currentUnderlyingNetwork;
+  private final Set<Network> physicalNetworks = new LinkedHashSet<>();
   private volatile boolean tunnelRequested = false;
   private volatile boolean gracefulShutdown = false;
 
@@ -79,8 +80,8 @@ public class PortmasterTunnelService extends VpnService {
     }
 
     synchronized (networkLock) {
-      if (currentUnderlyingNetwork == null) {
-        Log.i(TAG, "network handoff pending: no physical network available");
+      if (physicalNetworks.isEmpty()) {
+        Log.i(TAG, "network handoff pending: no physical network available; keeping VPN fail-closed");
         return;
       }
     }
@@ -99,10 +100,7 @@ public class PortmasterTunnelService extends VpnService {
     super.onCreate();
 
     Engine.setOSFunctions(OSFunctions.get());
-
-    connectivityManager =
-      (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-
+    connectivityManager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
     createNotificationChannels();
 
     mConfigureIntent = PendingIntent.getActivity(
@@ -115,22 +113,16 @@ public class PortmasterTunnelService extends VpnService {
     registerEvents();
 
     GoInterface uiInterface = new GoInterface();
-
     this.vpnInit = new VPNInit("VPNInit", this);
     uiInterface.registerFunction(this.vpnInit);
-
     this.showNotification = new ShowNotification("ShowNotification", this);
     uiInterface.registerFunction(this.showNotification);
-
     this.cancelNotification = new CancelNotification("CancelNotification", this);
     uiInterface.registerFunction(this.cancelNotification);
-
     this.ignoreSocket = new VPNProtect("IgnoreSocket", this);
     uiInterface.registerFunction(this.ignoreSocket);
-
     this.connectionOwner = new ConnectionOwner("GetConnectionOwner", connectivityManager);
     uiInterface.registerFunction(this.connectionOwner);
-
     this.appUid = new GetAppUID("GetAppUID", this);
     uiInterface.registerFunction(this.appUid);
 
@@ -142,8 +134,6 @@ public class PortmasterTunnelService extends VpnService {
 
   @Override
   public int onStartCommand(Intent intent, int flags, int startId) {
-    // RethinkDNS follows the Android foreground-service lifecycle for its VPN.
-    // Portmaster must do the same or Android/OEM task killers may terminate it.
     ensureForeground();
 
     if (intent != null && ACTION_SHUTDOWN.equals(intent.getAction())) {
@@ -167,9 +157,6 @@ public class PortmasterTunnelService extends VpnService {
     networkHandler.removeCallbacks(reconnectTunnel);
     unregisterSystemEvents();
 
-    // A normal disconnect has already torn down the Go tunnel. Do not report it
-    // back to Go as an unexpected system kill, otherwise the old code enters a
-    // shutdown loop and can terminate the whole process.
     if (gracefulShutdown) {
       Engine.onServiceStop();
     } else {
@@ -186,10 +173,6 @@ public class PortmasterTunnelService extends VpnService {
     gracefulShutdown = true;
     tunnelRequested = false;
     networkHandler.removeCallbacks(reconnectTunnel);
-
-    // Let the serialized Go tunnel manager close gVisor and the TUN first.
-    // Keep a fallback stop in case there is no Activity available to send the
-    // normal shutdown command back to this service.
     Tunnel.disable();
     networkHandler.postDelayed(this::stopSelf, 1000L);
   }
@@ -222,7 +205,7 @@ public class PortmasterTunnelService extends VpnService {
 
     synchronized (this) {
       ParcelFileDescriptor fd = builder.establish();
-      if(fd != null) {
+      if (fd != null) {
         return fd.detachFd();
       }
     }
@@ -234,18 +217,13 @@ public class PortmasterTunnelService extends VpnService {
   public void onUnderlyingNetworkCapabilitiesChanged(
       Network network,
       NetworkCapabilities capabilities) {
-    // Never treat our own VPN transport as the upstream network. Waiting for
-    // capabilities before reacting also avoids an onAvailable/onCapabilities race.
     if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
       return;
     }
 
-    boolean changed = false;
+    boolean changed;
     synchronized (networkLock) {
-      if (currentUnderlyingNetwork == null || !currentUnderlyingNetwork.equals(network)) {
-        currentUnderlyingNetwork = network;
-        changed = true;
-      }
+      changed = physicalNetworks.add(network);
     }
 
     if (changed && tunnelRequested) {
@@ -254,15 +232,17 @@ public class PortmasterTunnelService extends VpnService {
   }
 
   public void onUnderlyingNetworkLost(Network network) {
-    boolean lostCurrent = false;
+    boolean changed;
+    boolean anyRemaining;
     synchronized (networkLock) {
-      if (currentUnderlyingNetwork != null && currentUnderlyingNetwork.equals(network)) {
-        currentUnderlyingNetwork = null;
-        lostCurrent = true;
-      }
+      changed = physicalNetworks.remove(network);
+      anyRemaining = !physicalNetworks.isEmpty();
     }
 
-    if (lostCurrent && tunnelRequested) {
+    // Protected Go sockets intentionally follow Android's current default
+    // physical network; they are not bound to a specific Network object. The
+    // callback set is therefore used only to detect handoffs/reconnect SPN.
+    if (changed && anyRemaining && tunnelRequested) {
       scheduleTunnelReconnect();
     }
   }
@@ -329,20 +309,14 @@ public class PortmasterTunnelService extends VpnService {
       Network active = connectivityManager.getActiveNetwork();
       if (active != null) {
         NetworkCapabilities capabilities = connectivityManager.getNetworkCapabilities(active);
-        if (capabilities == null ||
-            !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+        if (capabilities == null || !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
           synchronized (networkLock) {
-            currentUnderlyingNetwork = active;
+            physicalNetworks.add(active);
           }
         }
       }
 
       networkCallback = new NetworkCallbacks(this);
-
-      // Monitor physical underlays explicitly. Once a VpnService is established,
-      // the system default network may be the VPN itself; a default-network
-      // callback can therefore miss the Wi-Fi <-> cellular handoff we care about.
-      // This is the same separation used by mature Android VPNs such as RethinkDNS.
       NetworkRequest networkRequest = new NetworkRequest.Builder()
         .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
         .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
@@ -356,7 +330,7 @@ public class PortmasterTunnelService extends VpnService {
   }
 
   private void unregisterSystemEvents() {
-    if(systemIdleEventReceiver != null) {
+    if (systemIdleEventReceiver != null) {
       try {
         this.unregisterReceiver(systemIdleEventReceiver);
       } catch (IllegalArgumentException ignored) {
@@ -365,7 +339,7 @@ public class PortmasterTunnelService extends VpnService {
       systemIdleEventReceiver = null;
     }
 
-    if(networkCallback != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+    if (networkCallback != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
       try {
         connectivityManager.unregisterNetworkCallback(networkCallback);
       } catch (IllegalArgumentException ignored) {
@@ -375,7 +349,7 @@ public class PortmasterTunnelService extends VpnService {
     }
 
     synchronized (networkLock) {
-      currentUnderlyingNetwork = null;
+      physicalNetworks.clear();
     }
   }
 }

@@ -53,3 +53,41 @@
   <notifications/>
   <!-- Download notification/progress -->
   <app-download-progress (OnDownloadComplete)="CheckGeoIPData()"></app-download-progress>
+
+  <ion-list>
+    <ion-list-header>
+      <ion-label>SPN Routing</ion-label>
+    </ion-list-header>
+
+    <ion-item button detail="true" (click)="openAppsPage()">
+      <ion-icon name="apps-outline" slot="start"></ion-icon>
+      <ion-label>
+        Apps using Portmaster / SPN
+        <p>Choose which installed apps enter the VPN tunnel.</p>
+      </ion-label>
+    </ion-item>
+
+    <ion-item button detail="true" (click)="openRoutingPage()">
+      <ion-icon name="earth-outline" slot="start"></ion-icon>
+      <ion-label>
+        Exit country
+        <p>Automatic or force an SPN exit country.</p>
+      </ion-label>
+    </ion-item>
+
+    <ion-item button detail="true" (click)="openVPNSettings()">
+      <ion-icon name="shield-checkmark-outline" slot="start"></ion-icon>
+      <ion-label>
+        Android VPN settings
+        <p>Always-on VPN and block-without-VPN options.</p>
+      </ion-label>
+    </ion-item>
+  </ion-list>
+
+  <ion-item color="danger" *ngIf="TunnelError">
+    <ion-label class="ion-text-wrap">
+      <strong>VPN tunnel error</strong>
+      <p>{{ TunnelError }}</p>
+    </ion-label>
+  </ion-item>
+</ion-content>

@@ -1,6 +1,8 @@
 module github.com/safing/portmaster-android/go
 
-go 1.19
+go 1.26.8
+
+tool golang.org/x/mobile/cmd/gobind
 
 require (
 	github.com/fxamacker/cbor v1.5.1
@@ -11,7 +13,7 @@ require (
 	github.com/safing/portmaster v1.1.0
 	github.com/safing/spn v0.6.8
 	github.com/tevino/abool v1.2.0
-	gvisor.dev/gvisor v0.0.0-20230323070900-fa7aa5b4e2e5
+	gvisor.dev/gvisor v0.0.0-20260909235104-1db01ca840f4
 )
 
 require (
@@ -30,7 +32,7 @@ require (
 	github.com/google/gopacket v1.1.19 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
 	github.com/gorilla/mux v1.8.0 // indirect
-	github.com/gorilla/websocket v1.5.0 // indirect
+	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
@@ -58,20 +60,14 @@ require (
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/yusufpapurcu/wmi v1.2.3 // indirect
 	go.etcd.io/bbolt v1.3.7 // indirect
-	golang.org/x/crypto v0.9.0 // indirect
+	golang.org/x/crypto v0.56.0 // indirect
 	golang.org/x/exp v0.0.0-20230522175609-2e198f4a06a1 // indirect
-	golang.org/x/mobile v0.0.0-20230531173138-3c911d8e3eda // indirect
-	golang.org/x/mod v0.10.0 // indirect
+	golang.org/x/mobile v0.0.0-20260811163000-1769bbc171f0 // indirect
+	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/net v0.10.0 // indirect
-	golang.org/x/sync v0.2.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.8.0 // indirect
 	golang.org/x/time v0.3.0 // indirect
-	golang.org/x/tools v0.9.3 // indirect
+	golang.org/x/tools v0.48.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
-
-// Portmaster Android's fdbased TUN integration predates stopfd. Newer gVisor
-// revisions pull in a Linux-only stopfd package and no longer cross-compile
-// through gomobile for Android. Keep the Android-compatible revision this
-// project originally declared.
-replace gvisor.dev/gvisor v0.0.0-20230323070900-fa7aa5b4e2e5 => gvisor.dev/gvisor v0.0.0-20220817001344-846276b3dbc5

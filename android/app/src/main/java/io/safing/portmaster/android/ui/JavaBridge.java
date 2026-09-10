@@ -1,13 +1,10 @@
 package io.safing.portmaster.android.ui;
 
-import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.net.VpnService;
-import android.net.wifi.WifiManager;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -20,13 +17,13 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 import io.safing.portmaster.android.settings.Settings;
-import io.safing.portmaster.android.ui.MainActivity;
+import tunnel.Tunnel;
 
 @CapacitorPlugin(name = "JavaBridge")
 public class JavaBridge extends Plugin {
@@ -46,7 +43,8 @@ public class JavaBridge extends Plugin {
         obj.put("enabled", !disabledApps.contains(packageInfo.packageName));
         obj.put("system", isSystemPackage(packageInfo));
       } catch (JSONException e) {
-        e.printStackTrace();
+        call.reject("Failed to enumerate installed applications", e);
+        return;
       }
       list.put(obj);
     }
@@ -62,18 +60,50 @@ public class JavaBridge extends Plugin {
   @PluginMethod()
   public void setAppSettings(PluginCall call) {
     JSArray array = call.getArray("apps");
+    if (array == null) {
+      call.reject("Missing apps array");
+      return;
+    }
+
+    final PackageManager pm = getActivity().getPackageManager();
+    Set<String> disabledPackages = new HashSet<>();
 
     try {
       List<String> apps = array.toList();
-      Set<String> appsSet = new HashSet<>();
       for (String packageName : apps) {
-          appsSet.add(packageName);
+        if (packageName == null || packageName.trim().isEmpty()) {
+          call.reject("Invalid empty package name");
+          return;
+        }
+
+        try {
+          pm.getApplicationInfo(packageName, 0);
+        } catch (PackageManager.NameNotFoundException e) {
+          call.reject("Unknown application package: " + packageName);
+          return;
+        }
+
+        // Never let Portmaster itself be excluded from its own VpnService.
+        if (packageName.equals(getActivity().getPackageName())) {
+          continue;
+        }
+        disabledPackages.add(packageName);
       }
-      Settings.setDisabledApps(getActivity(), appsSet);
-    } catch (JSONException e) {
-      e.printStackTrace();
+
+      Settings.setDisabledApps(getActivity(), disabledPackages);
+
+      // VpnService.Builder only consumes allowed/disallowed applications when
+      // establish() creates the TUN. Rebuild an active tunnel so a settings
+      // change takes effect immediately instead of silently waiting for the
+      // next network handoff or manual reconnect.
+      if (Tunnel.isActive()) {
+        Tunnel.reconnect();
+      }
+
+      call.resolve();
+    } catch (JSONException | ClassCastException e) {
+      call.reject("Invalid apps array", e);
     }
-    call.resolve();
   }
 
   @PluginMethod()
@@ -81,7 +111,6 @@ public class JavaBridge extends Plugin {
     MainActivity activity = (MainActivity) getActivity();
     Intent intent = VpnService.prepare(activity.getApplicationContext());
     if(intent != null) {
-      // Request user permissions
       activity.startActivityForResult(intent, MainActivity.REQUEST_VPN_PERMISSION);
     }
     call.resolve();
@@ -112,12 +141,9 @@ public class JavaBridge extends Plugin {
 
   @PluginMethod
   public void initEngine(PluginCall call) {
-    // This should be called only from the welcome screen.
     MainActivity activity = (MainActivity) getActivity();
     activity.initEngine();
     call.resolve();
-
-    // Don't show the welcome screen next time.
     Settings.setWelcomeScreenShowed(activity, true);
   }
 
@@ -129,14 +155,25 @@ public class JavaBridge extends Plugin {
 
   @PluginMethod
   public void openUrlInBrowser(PluginCall call) {
+    String url = call.getString("url");
+    if (url == null) {
+      call.reject("Missing URL");
+      return;
+    }
+
     try {
-      String url = call.getString("url");
-      Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+      Uri uri = Uri.parse(url);
+      String scheme = uri.getScheme();
+      if (scheme == null || !"https".equals(scheme.toLowerCase(Locale.ROOT))) {
+        call.reject("Only HTTPS URLs may be opened");
+        return;
+      }
+
+      Intent browserIntent = new Intent(Intent.ACTION_VIEW, uri);
       this.getActivity().startActivity(browserIntent);
       call.resolve();
-    }catch(Exception e) {
-      e.printStackTrace();
-      call.reject(e.getMessage());
+    } catch(Exception e) {
+      call.reject("Failed to open URL", e);
     }
   }
 
@@ -146,9 +183,8 @@ public class JavaBridge extends Plugin {
       boolean showed = call.getBoolean("showed");
       Settings.setWelcomeScreenShowed(getActivity(), showed);
       call.resolve();
-    }catch(Exception e) {
-      e.printStackTrace();
-      call.reject(e.getMessage());
+    } catch(Exception e) {
+      call.reject("Failed to update welcome-screen setting", e);
     }
   }
 

@@ -20,6 +20,19 @@ var (
 	databaseBridgeConn    *websocket.Conn
 )
 
+var databaseReadPrefixes = []string{
+	"config:",
+	"runtime:spn/status",
+	"runtime:core/updates/state",
+	"runtime:system/status",
+	"runtime:subsystems/",
+	"runtime:system/security-level",
+	"core:status/versions",
+	"core:spn/account/user",
+	"map:main/",
+	"notifications:all/",
+}
+
 func setDatabaseCall(call PluginCall) {
 	databaseCallMu.Lock()
 	dbCall = call
@@ -30,6 +43,77 @@ func getDatabaseCall() PluginCall {
 	databaseCallMu.RLock()
 	defer databaseCallMu.RUnlock()
 	return dbCall
+}
+
+func databaseTargetAllowed(target string, prefixes []string) bool {
+	target = strings.TrimSpace(target)
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(target, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// validateDatabaseMessage is a defense-in-depth boundary between the bundled
+// WebView and Portbase's legacy admin-capable database WebSocket. The UI only
+// needs a small subset of the database; SPN auth-token and other internal
+// records are deliberately unreachable even if JavaScript is compromised.
+func validateDatabaseMessage(msg string) error {
+	parts := strings.SplitN(msg, "|", 4)
+	if len(parts) < 2 || parts[0] == "" {
+		return fmt.Errorf("malformed database bridge message")
+	}
+
+	method := parts[1]
+	if method == "cancel" {
+		if len(parts) != 2 {
+			return fmt.Errorf("malformed database cancel message")
+		}
+		return nil
+	}
+	if len(parts) < 3 {
+		return fmt.Errorf("database method %q is missing a target", method)
+	}
+
+	target := parts[2]
+	switch method {
+	case "query", "sub", "qsub":
+		target = strings.TrimSpace(target)
+		if strings.HasPrefix(target, "query ") {
+			target = strings.TrimSpace(strings.TrimPrefix(target, "query "))
+		}
+		if !databaseTargetAllowed(target, databaseReadPrefixes) {
+			return fmt.Errorf("database read target is not allowed")
+		}
+		return nil
+
+	case "get":
+		if !databaseTargetAllowed(target, databaseReadPrefixes) {
+			return fmt.Errorf("database read target is not allowed")
+		}
+		return nil
+
+	case "update":
+		if strings.HasPrefix(target, "config:") ||
+			target == "runtime:system/security-level" ||
+			strings.HasPrefix(target, "notifications:all/") {
+			return nil
+		}
+		return fmt.Errorf("database update target is not allowed")
+
+	case "create", "delete":
+		if strings.HasPrefix(target, "notifications:all/") {
+			return nil
+		}
+		return fmt.Errorf("database write target is not allowed")
+
+	case "insert":
+		return fmt.Errorf("database insert is not exposed to the Android UI")
+
+	default:
+		return fmt.Errorf("database method %q is not allowed", method)
+	}
 }
 
 func ensureDatabaseBridge() error {
@@ -69,6 +153,11 @@ func ensureDatabaseBridge() error {
 }
 
 func databaseSendMessage(msg string) error {
+	if err := validateDatabaseMessage(msg); err != nil {
+		log.Warningf("ui: rejected database bridge request: %s", err)
+		return err
+	}
+
 	if err := ensureDatabaseBridge(); err != nil {
 		return err
 	}
