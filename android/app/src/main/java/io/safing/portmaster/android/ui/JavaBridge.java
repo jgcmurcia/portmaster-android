@@ -23,6 +23,7 @@ import java.util.Locale;
 import java.util.Set;
 
 import io.safing.portmaster.android.settings.Settings;
+import tunnel.Tunnel;
 
 @CapacitorPlugin(name = "JavaBridge")
 public class JavaBridge extends Plugin {
@@ -90,6 +91,15 @@ public class JavaBridge extends Plugin {
       }
 
       Settings.setDisabledApps(getActivity(), disabledPackages);
+
+      // VpnService.Builder only consumes allowed/disallowed applications when
+      // establish() creates the TUN. Rebuild an active tunnel so a settings
+      // change takes effect immediately instead of silently waiting for the
+      // next network handoff or manual reconnect.
+      if (Tunnel.isActive()) {
+        Tunnel.reconnect();
+      }
+
       call.resolve();
     } catch (JSONException | ClassCastException e) {
       call.reject("Invalid apps array", e);
