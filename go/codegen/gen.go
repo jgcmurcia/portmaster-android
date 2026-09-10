@@ -49,15 +49,30 @@ func getNoErrorTypes(types []string) []string {
 	return noErrorTypes
 }
 
-var parseTSTypesRegex = regexp.MustCompile("ts:(.*)").FindString
+var parseTSTypesRegex = regexp.MustCompile(`ts:\(([^)]*)\)`)
 
 func parseTSTypes(comments []*ast.Comment) []string {
 	for _, c := range comments {
-		typesString := parseTSTypesRegex(c.Text)
-		typesString, _ = strings.CutPrefix(typesString, "ts:(")
-		typesString, _ = strings.CutSuffix(typesString, ")")
-		typesString = strings.ReplaceAll(typesString, " ", "")
-		return strings.Split(typesString, ",")
+		match := parseTSTypesRegex.FindStringSubmatch(c.Text)
+		if len(match) != 2 {
+			continue
+		}
+
+		typesString := strings.ReplaceAll(match[1], " ", "")
+		if typesString == "" {
+			continue
+		}
+
+		parts := strings.Split(typesString, ",")
+		result := make([]string, 0, len(parts))
+		for _, part := range parts {
+			if part != "" {
+				result = append(result, part)
+			}
+		}
+		if len(result) > 0 {
+			return result
+		}
 	}
 	return nil
 }
