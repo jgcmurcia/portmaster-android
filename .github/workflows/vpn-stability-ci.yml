@@ -54,7 +54,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: "18"
+          node-version: "22.20.0"
           cache: npm
 
       - name: Set up Android SDK
@@ -76,8 +76,6 @@ jobs:
           MOBILE_VERSION=1769bbc171f0a7eed0c9d32d907d176fe9dff510
           go install golang.org/x/mobile/cmd/gomobile@${MOBILE_VERSION}
           go install golang.org/x/mobile/cmd/gobind@${MOBILE_VERSION}
-          # Modern gomobile requires x/mobile to be part of the module's tool
-          # graph. Pin exactly the same revision used for the binaries above.
           go get -tool golang.org/x/mobile/cmd/gobind@${MOBILE_VERSION}
           go mod download golang.org/x/mobile
           go list -m golang.org/x/mobile
@@ -96,12 +94,14 @@ jobs:
       - name: Build Go Android bindings
         working-directory: go
         env:
-          BUILD_COMMIT: ${{ github.sha }}
           BUILD_USER: github-actions
           BUILD_HOST: github-actions
-          BUILD_DATE: ${{ github.event.repository.updated_at }}
           BUILD_SOURCE: ${{ github.server_url }}/${{ github.repository }}
+        shell: bash
         run: |
+          set -euo pipefail
+          export BUILD_COMMIT="$(git rev-parse HEAD)"
+          export BUILD_DATE="$(git show -s --format=%cI HEAD)"
           mkdir -p ../android/app/libs
           chmod +x ./build
           ./build
@@ -118,10 +118,14 @@ jobs:
           mkdir -p /tmp/golib-audit
           unzip -q ../android/app/libs/golib.aar 'jni/arm64-v8a/libgojni.so' -d /tmp/golib-audit
 
-          # Record which compiled dependency directly imports legacy OpenPGP.
-          # This is provenance for GO-2026-5932 and helps us remove it instead
-          # of silently allowlisting an unmaintained cryptographic package.
-          go list -deps -f '{{.ImportPath}}|{{join .Imports ","}}' ./... \
+          # Query only the packages that gomobile binds. The compat directory
+          # deliberately contains source stubs for different upstream package
+          # names, so ./... is not a valid package query here.
+          go list -deps -f '{{.ImportPath}}|{{join .Imports ","}}' \
+            github.com/safing/portmaster-android/go/engine \
+            github.com/safing/portmaster-android/go/engine/ui/exported \
+            github.com/safing/portmaster-android/go/engine/tunnel \
+            github.com/safing/portmaster-android/go/app_interface \
             | grep 'golang.org/x/crypto/openpgp' \
             | tee /tmp/openpgp-importers.txt || true
 
@@ -132,6 +136,13 @@ jobs:
           set -e
           exit "$status"
 
+      - name: Resolve candidate web lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --package-lock-only --ignore-scripts
+          cp package-lock.json /tmp/package-lock.resolved.json
+
       - name: Install web dependencies
         run: npm ci
 
@@ -141,7 +152,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          npm audit --omit=dev --audit-level=high | tee /tmp/npm-audit-production.txt
+          npm audit --omit=dev --audit-level=low | tee /tmp/npm-audit-production.txt
 
       - name: Build web UI
         run: npm run build -- --configuration production
@@ -175,6 +186,7 @@ jobs:
             /tmp/go-modules.txt
             /tmp/go.mod.resolved
             /tmp/go.sum.resolved
+            /tmp/package-lock.resolved.json
             android/app/build/reports/lint-results-debug.html
             android/app/build/reports/lint-results-debug.txt
           if-no-files-found: ignore
