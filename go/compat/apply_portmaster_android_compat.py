@@ -86,6 +86,50 @@ if "verifyAndroidGeoIPHash(resource, unpacked)" not in geoip_source:
     geoip_source = geoip_source.replace(verify_anchor, verify_replacement, 1)
 geoip_db.write_text(geoip_source)
 
+# Portbase 0.16.6 predates Go's final slices.SortFunc API. The old comparator
+# returned bool; Go 1.26 requires a three-way int comparator. Patch the module
+# cache so legacy updater behavior remains identical on the modern toolchain.
+portbase_dir = Path(subprocess.check_output(
+    ["go", "list", "-m", "-f", "{{.Dir}}", "github.com/safing/portbase"],
+    cwd=root,
+    text=True,
+).strip())
+portbase_updater = portbase_dir / "updater" / "updating.go"
+portbase_updater.parent.chmod(portbase_updater.parent.stat().st_mode | 0o200)
+portbase_updater.chmod(portbase_updater.stat().st_mode | 0o200)
+portbase_source = portbase_updater.read_text()
+old_sort = """	slices.SortFunc[*ResourceVersion](toUpdate, func(a, b *ResourceVersion) bool {
+		return a.resource.Identifier < b.resource.Identifier
+	})
+	slices.SortFunc[*ResourceVersion](missingSigs, func(a, b *ResourceVersion) bool {
+		return a.resource.Identifier < b.resource.Identifier
+	})
+"""
+new_sort = """	slices.SortFunc[*ResourceVersion](toUpdate, func(a, b *ResourceVersion) int {
+		if a.resource.Identifier < b.resource.Identifier {
+			return -1
+		}
+		if a.resource.Identifier > b.resource.Identifier {
+			return 1
+		}
+		return 0
+	})
+	slices.SortFunc[*ResourceVersion](missingSigs, func(a, b *ResourceVersion) int {
+		if a.resource.Identifier < b.resource.Identifier {
+			return -1
+		}
+		if a.resource.Identifier > b.resource.Identifier {
+			return 1
+		}
+		return 0
+	})
+"""
+if old_sort in portbase_source:
+    portbase_source = portbase_source.replace(old_sort, new_sort, 1)
+elif new_sort not in portbase_source:
+    raise SystemExit("could not locate legacy Portbase slices.SortFunc comparators")
+portbase_updater.write_text(portbase_source)
+
 # Ensure the SPN captain cannot race the updater on a clean Android install.
 spn_dir = Path(subprocess.check_output(
     ["go", "list", "-m", "-f", "{{.Dir}}", "github.com/safing/spn"],
@@ -106,4 +150,5 @@ captain_module.write_text(captain_source)
 
 print(f"patched Portmaster updater at {pm_dir}")
 print(f"patched Portmaster GeoIP verification at {geoip_dir}")
+print(f"patched Portbase updater compatibility at {portbase_updater}")
 print(f"patched SPN captain startup ordering at {spn_dir}")
