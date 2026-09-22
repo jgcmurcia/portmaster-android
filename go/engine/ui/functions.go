@@ -173,8 +173,7 @@ func GetDebugInfoFile() {
 
 func GetDebugInfo() (string, error) {
 	debugInfo, err := logs.GetDebugInfo("github")
-	escaped := strings.ReplaceAll(string(debugInfo), `"`, `\"`)
-	return escaped, err
+	return string(debugInfo), err
 }
 
 func Shutdown() {

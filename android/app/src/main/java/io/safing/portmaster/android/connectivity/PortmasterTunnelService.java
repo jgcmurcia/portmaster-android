@@ -73,6 +73,7 @@ public class PortmasterTunnelService extends VpnService {
   private Function connectionOwner;
   private Function vpnInit;
   private Function appUid;
+  private Function serviceCommand;
 
   private final Runnable reconnectTunnel = () -> {
     if (!tunnelRequested || gracefulShutdown) {
@@ -125,6 +126,24 @@ public class PortmasterTunnelService extends VpnService {
     uiInterface.registerFunction(this.connectionOwner);
     this.appUid = new GetAppUID("GetAppUID", this);
     uiInterface.registerFunction(this.appUid);
+    this.serviceCommand = new Function("SendServiceCommand") {
+      @Override
+      public byte[] call(byte[] args) throws Exception {
+        String command = parseArguments(args, String.class);
+        if ("shutdown".equals(command)) {
+          networkHandler.post(() -> {
+            gracefulShutdown = true;
+            tunnelRequested = false;
+            networkHandler.removeCallbacks(reconnectTunnel);
+            stopSelf();
+          });
+        } else if (!"keep_alive".equals(command)) {
+          throw new IllegalArgumentException("Unknown VPN service command");
+        }
+        return null;
+      }
+    };
+    uiInterface.registerFunction(this.serviceCommand);
 
     Engine.setServiceFunctions(uiInterface);
 
@@ -158,6 +177,7 @@ public class PortmasterTunnelService extends VpnService {
     unregisterSystemEvents();
 
     if (gracefulShutdown) {
+      Tunnel.disable();
       Engine.onServiceStop();
     } else {
       Engine.onServiceDestroy();
@@ -187,7 +207,10 @@ public class PortmasterTunnelService extends VpnService {
       .addDnsServer("9.9.9.9")
       .addDnsServer("2620:fe::fe");
 
-    Set<String> disabledPackages = Settings.getDisabledApps(this);
+    // Account, Intel and SPN transport sockets must be able to bootstrap while
+    // captured application traffic is blocked waiting for SPN readiness.
+    Set<String> disabledPackages = new LinkedHashSet<>(Settings.getDisabledApps(this));
+    disabledPackages.add(getPackageName());
     for (String packageName : disabledPackages) {
       try {
         builder.addDisallowedApplication(packageName);

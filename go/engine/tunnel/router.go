@@ -3,8 +3,10 @@ package tunnel
 import (
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/safing/portbase/config"
 	"github.com/safing/portbase/database"
@@ -43,6 +45,7 @@ func initializeRouter() {
 
 func initializeDialer() {
 	dialerNotTunneled = net.Dialer{
+		Timeout: 15 * time.Second,
 		Control: func(network, address string, c syscall.RawConn) error {
 			var protectErr error
 			if err := c.Control(func(fd uintptr) {
@@ -95,7 +98,7 @@ func routeUDPThroughSPN(fr *udp.ForwarderRequest) error {
 }
 
 func routeTCPThroughDefaultInterface(fr *tcp.ForwarderRequest) error {
-	remote := fmt.Sprintf("%s:%d", fr.ID().LocalAddress.String(), fr.ID().LocalPort)
+	remote := net.JoinHostPort(fr.ID().LocalAddress.String(), strconv.Itoa(int(fr.ID().LocalPort)))
 	remoteConn, tcpErr := dialerNotTunneled.Dial("tcp", remote)
 	if tcpErr != nil {
 		return fmt.Errorf("failed to establish connection to remote host %s: %s", remote, tcpErr)
@@ -113,7 +116,7 @@ func routeTCPThroughDefaultInterface(fr *tcp.ForwarderRequest) error {
 }
 
 func routeUDPThroughDefaultInterface(fr *udp.ForwarderRequest) error {
-	remote := fmt.Sprintf("%s:%d", fr.ID().LocalAddress.String(), fr.ID().LocalPort)
+	remote := net.JoinHostPort(fr.ID().LocalAddress.String(), strconv.Itoa(int(fr.ID().LocalPort)))
 	remoteConn, udpErr := dialerNotTunneled.Dial("udp", remote)
 	if udpErr != nil {
 		return fmt.Errorf("failed to establish connection to remote host %s: %s", remote, udpErr)
@@ -126,7 +129,7 @@ func routeUDPThroughDefaultInterface(fr *udp.ForwarderRequest) error {
 		return fmt.Errorf("failed to create endpoint for remote %s: %s", remote, err)
 	}
 	systemConn := gonet.NewUDPConn(&wq, ep)
-	addDefaultConnection(systemConn, remoteConn, ep)
+	addDefaultConnectionWithIdle(systemConn, remoteConn, ep, udpIdleTimeout)
 	return nil
 }
 

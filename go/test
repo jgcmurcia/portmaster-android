@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
+
+# Use the same legacy dependency compatibility patches as the Android build,
+# including on a clean CI runner with no pre-patched module cache.
+python3 compat/apply_portmaster_android_compat.py
+
+# Upstream's pure-Go connection constructor is named connection_android.go.
+# Expose that SAME implementation to host tests using a temporary module, without
+# changing the dependency cache or substituting a mock for SPN routing.
+testdir=$(mktemp -d)
+trap 'chmod -R u+w "$testdir"; rm -rf "$testdir"' EXIT
+python3 - "$testdir" <<'PY'
+import pathlib
+import shutil
+import subprocess
+import sys
+
+module = pathlib.Path(subprocess.check_output(
+    ["go", "list", "-m", "-f", "{{.Dir}}", "github.com/safing/portmaster"],
+    text=True).strip())
+source = module / "network" / "connection_android.go"
+if not source.is_file():
+    raise SystemExit(f"missing upstream Android connection implementation: {source}")
+target = pathlib.Path(sys.argv[1])
+shutil.copytree(module, target / "portmaster")
+for path in (target / "portmaster").rglob("*"):
+    path.chmod(path.stat().st_mode | 0o200)
+copied = target / "portmaster" / "network" / source.name
+copied.rename(copied.with_name("connection_mobile.go"))
+shutil.copyfile("go.mod", target / "go.mod")
+shutil.copyfile("go.sum", target / "go.sum")
+PY
+go mod edit -modfile="$testdir/go.mod" -replace="github.com/safing/portmaster=$testdir/portmaster"
+go test -mod=mod -modfile="$testdir/go.mod" "$@" ./codegen ./app_interface ./engine ./engine/tunnel ./engine/ui ./engine/ui/exported

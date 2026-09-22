@@ -6,7 +6,8 @@ tool golang.org/x/mobile/cmd/gobind
 
 require (
 	github.com/fxamacker/cbor v1.5.1
-	github.com/fxamacker/cbor/v2 v2.4.0
+	github.com/fxamacker/cbor/v2 v2.7.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/hashicorp/go-version v1.6.0
 	github.com/miekg/dns v1.1.54
 	github.com/safing/portbase v0.16.6
@@ -32,7 +33,6 @@ require (
 	github.com/google/gopacket v1.1.19 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
 	github.com/gorilla/mux v1.8.0 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
@@ -61,13 +61,13 @@ require (
 	github.com/yusufpapurcu/wmi v1.2.3 // indirect
 	go.etcd.io/bbolt v1.3.7 // indirect
 	golang.org/x/crypto v0.56.0 // indirect
-	golang.org/x/exp v0.0.0-20230522175609-2e198f4a06a1 // indirect
+	golang.org/x/exp v0.0.0-20250711185948-6ae5c78190dc // indirect
 	golang.org/x/mobile v0.0.0-20260811163000-1769bbc171f0 // indirect
 	golang.org/x/mod v0.38.0 // indirect
-	golang.org/x/net v0.10.0 // indirect
+	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/sys v0.8.0 // indirect
-	golang.org/x/time v0.3.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.48.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )

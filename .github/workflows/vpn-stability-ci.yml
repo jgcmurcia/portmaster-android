@@ -91,6 +91,13 @@ jobs:
           cp go.mod /tmp/go.mod.resolved
           cp go.sum /tmp/go.sum.resolved
 
+      - name: Run Go VPN and bridge tests
+        working-directory: go
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash ./test -race -vet=all -count=1
+
       - name: Build Go Android bindings
         working-directory: go
         env:
@@ -135,18 +142,13 @@ jobs:
           set -e
           exit "$status"
 
-      - name: Resolve candidate web lockfile
-        shell: bash
+      - name: Install web dependencies
         run: |
-          set -euo pipefail
-          # Do not let the Angular 16 lock graph constrain resolution of the
-          # intentionally upgraded Angular 20 manifest.
-          rm -f package-lock.json
-          npm install --package-lock-only --ignore-scripts
+          npm ci
           cp package-lock.json /tmp/package-lock.resolved.json
 
-      - name: Install web dependencies
-        run: npm ci
+      - name: Lint web UI
+        run: npm run lint
 
       - name: Audit production web dependencies
         id: npmaudit

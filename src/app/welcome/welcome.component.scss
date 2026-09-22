@@ -1,8 +1,5 @@
-/* Without setting height the slides will take up the height of the slide's content */
-ion-slides {
-  height: 100%;
-}
-
-.logo {
-  fill: #fff;
-}
+.welcome-steps { min-height: 100%; }
+.welcome-step:not([hidden]) { min-height: 100%; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; }
+.slide { width: 100%; max-width: 560px; }
+.slide svg, .slide img { width: 100%; max-width: 240px; margin: 20px auto; }
+.logo { fill: var(--ion-color-primary); }

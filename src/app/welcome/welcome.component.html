@@ -1,6 +1,6 @@
 <ion-content>
-  <ion-slides #slides (ionSlideDidChange)="onActiveIndexChange()">
-    <ion-slide>
+  <div class="welcome-steps">
+    <section class="welcome-step" [hidden]="step !== 0">
       <div class="slide">
         <svg data-name="Layer 1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 128 128">
           <g data-name="Main" fill-rule="evenodd">
@@ -14,10 +14,10 @@
         <br>
         <br>
         <br>
-        <ion-label>Swipe &gt;</ion-label>
+        <ion-button (click)="NextSlide()">Get started</ion-button>
       </div>
-    </ion-slide>
-    <ion-slide>
+    </section>
+    <section class="welcome-step" [hidden]="step !== 1">
       <div class="slide">
         <ion-icon name="key-outline" size="large"></ion-icon>
         <p>In order to work properly, Portmaster needs the following permissions:</p>
@@ -63,13 +63,13 @@
                 <p>Needed so Portmaster can properly route connections and reconnect when a network interface changes.</p>
                 <p>Portmaster is fully open source so everything can be verified.</p>
               </ion-label>
-              <ion-button (click)="NextSlide()">Acknowledge</ion-button>
+              <ion-button [disabled]="!VPNPermissionGranted" (click)="NextSlide()">Continue</ion-button>
             </div>
           </ion-accordion>
         </ion-accordion-group>
       </div>
-    </ion-slide>
-    <ion-slide>
+    </section>
+    <section class="welcome-step" [hidden]="step !== 2">
       <div class="slide">
         <img src="../../assets/multiple-identities-for-each-app.png" />
 
@@ -80,13 +80,13 @@
           <p>The downloaded GeoIP data is used by Portmaster to see which countries your connections are going to and to calculate the best routes for SPN.</p>
         </ion-label>
       </div>
-    </ion-slide>
-    <ion-slide>
+    </section>
+    <section class="welcome-step" [hidden]="step !== 3">
       <div class="slide">
         <img src="../../assets/bye-bye-vpns.png" />
         <p>You will be notified as soon as the downloaded has completed. In the mean time you can sign in and explore the settings.</p>
         <ion-button (click)="Continue()">Continue</ion-button>
       </div>
-    </ion-slide>
-  </ion-slides>
+    </section>
+  </div>
 </ion-content>

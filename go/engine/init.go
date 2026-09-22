@@ -202,8 +202,10 @@ func configureInternalAPI() error {
 func OnDestroy() {
 	log.Info("engine: OnDestroy")
 
-	if err := app_interface.MinimizeApp(); err != nil {
-		log.Errorf("engine: %s", err.Error())
+	if app_interface.HasActivityFunctions() {
+		if err := app_interface.MinimizeApp(); err != nil {
+			log.Errorf("engine: %s", err.Error())
+		}
 	}
 
 	if err := modules.Shutdown(); err != nil {
@@ -215,8 +217,10 @@ func OnDestroy() {
 	// Full process termination is retained for this legacy core because the
 	// module registry is not restartable in-process after modules.Shutdown().
 	// It is invoked only after graceful module/TUN teardown has completed.
-	if err := app_interface.Shutdown(); err != nil {
-		fmt.Printf("engine: failed to shutdown app: %s", err.Error())
+	if app_interface.HasOSFunctions() {
+		if err := app_interface.Shutdown(); err != nil {
+			fmt.Printf("engine: failed to shutdown app: %s", err.Error())
+		}
 	}
 }
 

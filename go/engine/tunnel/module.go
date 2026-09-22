@@ -43,6 +43,8 @@ var (
 
 	eventChannel chan string
 
+	routerInit      sync.Once
+	tunnelOpLock    sync.Mutex
 	stackLock       sync.RWMutex
 	stateLock       sync.RWMutex
 	tunnelLastError string
@@ -68,20 +70,6 @@ func LastError() string {
 	stateLock.RLock()
 	defer stateLock.RUnlock()
 	return tunnelLastError
-}
-
-func setActiveStack(s *stack.Stack) {
-	stackLock.Lock()
-	netStack = s
-	stackLock.Unlock()
-}
-
-func takeActiveStack() *stack.Stack {
-	stackLock.Lock()
-	s := netStack
-	netStack = nil
-	stackLock.Unlock()
-	return s
 }
 
 func start() error {
@@ -114,12 +102,15 @@ func start() error {
 					}
 
 				case "reconnect":
-					destroyTunnelInterface()
 					if err := setupTunnelInterface(); err != nil {
 						setLastError(err)
 						log.Errorf("vpn-service: failed to reconnect tunnel: %s", err)
-						if stopErr := app_interface.SendServicesCommand("shutdown"); stopErr != nil {
-							log.Warningf("vpn-service: failed to stop service after reconnect failure: %s", stopErr)
+						// Keep the old VPN established if replacement fails. Closing it
+						// would restore physical routing and leak application traffic.
+						if !IsActive() {
+							if stopErr := app_interface.SendServicesCommand("shutdown"); stopErr != nil {
+								log.Warningf("vpn-service: failed to stop service after reconnect failure: %s", stopErr)
+							}
 						}
 						continue
 					}
@@ -146,7 +137,14 @@ func start() error {
 }
 
 func Enable() { eventChannel <- "connect" }
-func Disable() { eventChannel <- "disconnect" }
+
+// Disable tears down the TUN synchronously. Android calls this from
+// VpnService.onDestroy, where queuing an event would race Engine's service
+// callbacks and could leave the descriptor open after the service stopped.
+func Disable() {
+	destroyTunnelInterface()
+	setLastError(nil)
+}
 
 func Reconnect() {
 	select {
@@ -259,22 +257,12 @@ func startTUNBridge(ctx context.Context, file *os.File, endpoint *channel.Endpoi
 }
 
 func setupTunnelInterface() (err error) {
-	if IsActive() {
-		return nil
-	}
+	tunnelOpLock.Lock()
+	defer tunnelOpLock.Unlock()
 
-	fd, err := app_interface.VPNInit()
-	if err != nil {
-		return fmt.Errorf("initialize VPN file descriptor: %w", err)
-	}
-	if fd <= 0 {
-		return fmt.Errorf("invalid tunnel file descriptor: %d", fd)
-	}
-
-	file := os.NewFile(uintptr(fd), "tunnel")
-	if file == nil {
-		return fmt.Errorf("wrap tunnel file descriptor %d", fd)
-	}
+	// Prepare the complete replacement stack before asking Android to switch
+	// routing. Until establish succeeds the old descriptor remains open.
+	var file *os.File
 
 	var newStack *stack.Stack
 	var newEndpoint *channel.Endpoint
@@ -294,10 +282,12 @@ func setupTunnelInterface() (err error) {
 			newStack.Close()
 			newStack.Wait()
 		}
-		_ = file.Close()
+		if file != nil {
+			_ = file.Close()
+		}
 	}()
 
-	initializeRouter()
+	routerInit.Do(initializeRouter)
 	log.Info("vpn-service: initializing tunnel interface")
 
 	maddr, err := net.ParseMAC("aa:00:17:17:17:17")
@@ -308,7 +298,7 @@ func setupTunnelInterface() (err error) {
 
 	nicID := tcpip.NICID(1)
 	newStack = stack.New(stack.Options{
-		NetworkProtocols: []stack.NetworkProtocolFactory{ipv4.NewProtocol, ipv6.NewProtocol},
+		NetworkProtocols:   []stack.NetworkProtocolFactory{ipv4.NewProtocol, ipv6.NewProtocol},
 		TransportProtocols: []stack.TransportProtocolFactory{tcp.NewProtocol, udp.NewProtocol, icmp.NewProtocol4, icmp.NewProtocol6},
 	})
 
@@ -364,39 +354,63 @@ func setupTunnelInterface() (err error) {
 	})
 	newStack.SetTransportProtocolHandler(udp.ProtocolNumber, udpForwarder.HandlePacket)
 
+	fd, err := app_interface.VPNInit()
+	if err != nil {
+		return fmt.Errorf("initialize VPN file descriptor: %w", err)
+	}
+	if fd < 0 {
+		return fmt.Errorf("invalid tunnel file descriptor: %d", fd)
+	}
+	file = os.NewFile(uintptr(fd), "tunnel")
+	if file == nil {
+		return fmt.Errorf("wrap tunnel file descriptor %d", fd)
+	}
+
 	bridgeCtx, cancel := context.WithCancel(context.Background())
 	bridgeCancel = cancel
-	startTUNBridge(bridgeCtx, file, newEndpoint)
+	EndAllConnections()
 
-	tunnelFD = file
-	tunEndpoint = newEndpoint
-	tunBridgeCancel = bridgeCancel
-	setActiveStack(newStack)
+	stackLock.Lock()
+	oldStack, oldFD := netStack, tunnelFD
+	oldEndpoint, oldCancel := tunEndpoint, tunBridgeCancel
+	netStack, tunnelFD = newStack, file
+	tunEndpoint, tunBridgeCancel = newEndpoint, bridgeCancel
+	stackLock.Unlock()
+
+	startTUNBridge(bridgeCtx, file, newEndpoint)
 	success = true
+	closeTunnelResources(oldStack, oldFD, oldEndpoint, oldCancel)
 	log.Info("vpn-service: tunnel interface ready")
 	return nil
 }
 
-func destroyTunnelInterface() {
-	log.Info("vpn-service: shutting down tunnel interface")
-	EndAllConnections()
-
-	if tunBridgeCancel != nil {
-		tunBridgeCancel()
-		tunBridgeCancel = nil
+func closeTunnelResources(s *stack.Stack, file *os.File, endpoint *channel.Endpoint, cancel context.CancelFunc) {
+	if cancel != nil {
+		cancel()
 	}
-	if tunEndpoint != nil {
-		tunEndpoint.Close()
-		tunEndpoint = nil
+	if file != nil {
+		_ = file.Close()
 	}
-	if s := takeActiveStack(); s != nil {
+	if endpoint != nil {
+		endpoint.Close()
+	}
+	if s != nil {
 		s.Close()
 		s.Wait()
 	}
-	if tunnelFD != nil {
-		_ = tunnelFD.Close()
-		tunnelFD = nil
-	}
+}
+
+func destroyTunnelInterface() {
+	tunnelOpLock.Lock()
+	defer tunnelOpLock.Unlock()
+
+	log.Info("vpn-service: shutting down tunnel interface")
+	EndAllConnections()
+	stackLock.Lock()
+	s, file, endpoint, cancel := netStack, tunnelFD, tunEndpoint, tunBridgeCancel
+	netStack, tunnelFD, tunEndpoint, tunBridgeCancel = nil, nil, nil, nil
+	stackLock.Unlock()
+	closeTunnelResources(s, file, endpoint, cancel)
 }
 
 func IsActive() bool {

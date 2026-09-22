@@ -30,6 +30,51 @@ public class GoBridge extends Plugin {
 	}
 
 	@PluginMethod()
+	public void SPNLogin(PluginCall call) {
+		exported.Exported.spnLogin(new GoPluginCall(this, call));
+	}
+
+	@PluginMethod()
+	public void SPNLogout(PluginCall call) {
+		exported.Exported.spnLogout(new GoPluginCall(this, call));
+	}
+
+	@PluginMethod()
+	public void RefreshSPNUserProfile(PluginCall call) {
+		exported.Exported.refreshSPNUserProfile(new GoPluginCall(this, call));
+	}
+
+	@PluginMethod()
+	public void GetSPNUserProfile(PluginCall call) {
+		exported.Exported.getSPNUserProfile(new GoPluginCall(this, call));
+	}
+
+	@PluginMethod()
+	public void GetSPNStatus(PluginCall call) {
+		exported.Exported.getSPNStatus(new GoPluginCall(this, call));
+	}
+
+	@PluginMethod()
+	public void SetSPNEnabled(PluginCall call) {
+		exported.Exported.setSPNEnabled(new GoPluginCall(this, call));
+	}
+
+	@PluginMethod()
+	public void SetSPNExitCountry(PluginCall call) {
+		exported.Exported.setSPNExitCountry(new GoPluginCall(this, call));
+	}
+
+	@PluginMethod()
+	public void GetSPNExitCountry(PluginCall call) {
+		exported.Exported.getSPNExitCountry(new GoPluginCall(this, call));
+	}
+
+	@PluginMethod()
+	public void GetTunnelLastError(PluginCall call) {
+		exported.Exported.getTunnelLastError(new GoPluginCall(this, call));
+	}
+
+	@PluginMethod()
 	public void GetLogs(PluginCall call) {
 		exported.Exported.getLogs(new GoPluginCall(this, call));
 	}

@@ -468,7 +468,7 @@ export class PortapiService {
             // for data-manipulating methods success
             // ends the stream.
             if (data.type === 'success') {
-              observer.next();
+              observer.next(undefined);
               observer.complete();
               return;
             }

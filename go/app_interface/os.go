@@ -17,6 +17,10 @@ func HasOSFunctions() bool {
 }
 
 func GetNetworkInterfaces() ([]NetworkInterface, error) {
+	if osFunctions == nil {
+		return nil, fmt.Errorf("Android OS functions are not initialized")
+	}
+
 	bytes, err := osFunctions.call("GetNetworkInterfaces", nil)
 	if err != nil {
 		return nil, err
@@ -33,6 +37,10 @@ func GetNetworkInterfaces() ([]NetworkInterface, error) {
 }
 
 func GetNetworkAddresses() ([]NetworkAddress, error) {
+	if osFunctions == nil {
+		return nil, fmt.Errorf("Android OS functions are not initialized")
+	}
+
 	bytes, err := osFunctions.call("GetNetworkAddresses", nil)
 	if err != nil {
 		return nil, err
@@ -46,6 +54,10 @@ func GetNetworkAddresses() ([]NetworkAddress, error) {
 }
 
 func GetPlatformInfo() (*PlatformInfo, error) {
+	if osFunctions == nil {
+		return nil, fmt.Errorf("Android OS functions are not initialized")
+	}
+
 	info := &PlatformInfo{}
 
 	bytes, err := osFunctions.call("GetPlatformInfo", nil)
@@ -61,6 +73,10 @@ func GetPlatformInfo() (*PlatformInfo, error) {
 }
 
 func Shutdown() error {
+	if osFunctions == nil {
+		return fmt.Errorf("Android OS functions are not initialized")
+	}
+
 	_, err := osFunctions.call("Shutdown", nil)
 	if err != nil {
 		return err

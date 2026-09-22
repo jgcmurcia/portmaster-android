@@ -16,7 +16,6 @@ import { SPNService } from './app/lib/spn.service';
 import { ConfigService } from './app/lib/config.service';
 import { NotificationsService } from './app/services/notifications.service';
 import { StatusService } from './app/services/status.service';
-import { MarkdownService, SECURITY_CONTEXT } from 'ngx-markdown';
 import { ShutdownService } from './app/services/shutdown.service';
 import { UpdaterService } from './app/services/updater.service';
 
@@ -43,7 +42,6 @@ bootstrapApplication(AppComponent, {
     ConfigService,
     StatusService,
     UpdaterService,
-    MarkdownService,
     ShutdownService,
     provideHttpGoClient(),
     { provide: RouteReuseStrategy, useClass: IonicRouteStrategy },
@@ -51,6 +49,5 @@ bootstrapApplication(AppComponent, {
     provideRouter(routes),
     {provide: PORTMASTER_HTTP_API_ENDPOINT, useValue: 'internal:'},
     {provide: PORTMASTER_WS_API_ENDPOINT, useValue: 'not_used'},
-    {provide: SECURITY_CONTEXT, useValue: 0},
   ],
 });

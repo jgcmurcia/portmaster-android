@@ -1,8 +1,8 @@
 package tunnel
 
 import (
-	"fmt"
 	"net"
+	"strconv"
 
 	"github.com/safing/portmaster/network/packet"
 )
@@ -27,5 +27,5 @@ func (a Addr) Network() string {
 }
 
 func (a Addr) String() string {
-	return fmt.Sprintf("%s:%d", a.ip, a.port)
+	return net.JoinHostPort(a.ip.String(), strconv.Itoa(int(a.port)))
 }
