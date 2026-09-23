@@ -3,9 +3,9 @@
     <ion-buttons slot="start">
       <ion-button (click)="Close()">Cancel</ion-button>
     </ion-buttons>
-    <ion-title class="ion-text-center">Allowed apps</ion-title>
+    <ion-title class="ion-text-center">Apps using SPN</ion-title>
     <ion-buttons slot="end">
-      <ion-button (click)="Save()">Save</ion-button>
+      <ion-button (click)="Save()" [disabled]="Saving || Loading">Save</ion-button>
     </ion-buttons>
   </ion-toolbar>
 </ion-header>
@@ -15,9 +15,19 @@
     Show system apps:<ion-toggle [(ngModel)]="ShowSystemApps"></ion-toggle>
   </ion-list-header>
   <ion-label>
-    <p class="ion-padding">Disable the apps that you don't want to be routed through the SPN.</p>
+    <p class="ion-padding">
+      Switch on the apps you want to route through SPN when it is connected.
+      Switched-off apps use your normal Internet connection and bypass Portmaster.
+      Save applies the selection to the active VPN.
+    </p>
   </ion-label>
-  <ion-list>
+  <div class="ion-text-center ion-padding" *ngIf="Loading">
+    <ion-spinner name="crescent"></ion-spinner>
+  </div>
+  <ion-item color="danger" *ngIf="Error">
+    <ion-label class="ion-text-wrap">{{Error}}</ion-label>
+  </ion-item>
+  <ion-list *ngIf="!Loading">
     <ion-item *ngFor="let app of AppList | systemAppsFilter: !ShowSystemApps">
       <ion-label>{{app.name}}</ion-label>
       <ion-toggle [(ngModel)]="app.enabled"></ion-toggle>

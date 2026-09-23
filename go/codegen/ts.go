@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"strings"
 	"text/template"
 )
 
@@ -134,10 +135,15 @@ func getTypescriptReturnNames(prefix string, f Func) string {
 		result += "["
 	}
 
-	for i := range returnTypes {
-		result += fmt.Sprintf("%sret%d", prefix, i)
+	resultIndex := 0
+	for originalIndex, returnType := range f.ReturnTypes {
+		if returnType == "error" {
+			continue
+		}
+		result += fmt.Sprintf("%sret%d", prefix, originalIndex)
+		resultIndex++
 
-		if i < len(returnTypes)-1 {
+		if resultIndex < len(returnTypes) {
 			result += ", "
 		}
 	}
@@ -210,7 +216,15 @@ func writeToTSFile(filename string, functions []Func) {
 	}
 	defer tsFile.Close()
 
-	_, err = tsFile.WriteString(fmt.Sprintf(typescriptFileTemplate, getInterfaceMethods(functions), getClassMethods(functions)))
+	output := fmt.Sprintf(typescriptFileTemplate, getInterfaceMethods(functions), getClassMethods(functions))
+	// Templates intentionally use tabs for indentation. Strip indentation from
+	// otherwise-empty lines so generated bindings remain clean under git diff
+	// and common formatting checks.
+	lines := strings.Split(output, "\n")
+	for i := range lines {
+		lines[i] = strings.TrimRight(lines[i], " \t")
+	}
+	_, err = tsFile.WriteString(strings.Join(lines, "\n"))
 	if err != nil {
 		fmt.Printf("Failed to write to file: %s", err)
 		return

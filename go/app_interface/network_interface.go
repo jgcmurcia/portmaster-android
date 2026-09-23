@@ -45,26 +45,28 @@ func (i *NetworkInterface) GetProtocolAddresses() []tcpip.ProtocolAddress {
 			continue
 		}
 
-		var raw net.IP
+		var address tcpip.Address
 		var protocol tcpip.NetworkProtocolNumber
 		if a.IsIPv6 {
-			raw = parsed.To16()
+			raw := parsed.To16()
+			if raw == nil {
+				continue
+			}
+			address = tcpip.AddrFrom16Slice(raw)
 			protocol = ipv6.ProtocolNumber
 		} else {
-			raw = parsed.To4()
+			raw := parsed.To4()
+			if raw == nil {
+				continue
+			}
+			address = tcpip.AddrFrom4Slice(raw)
 			protocol = ipv4.ProtocolNumber
-		}
-		if raw == nil {
-			continue
 		}
 
 		addresses = append(addresses, tcpip.ProtocolAddress{
 			Protocol: protocol,
 			AddressWithPrefix: tcpip.AddressWithPrefix{
-				// This gVisor version stores network addresses as a string of raw
-				// bytes. Casting the textual IP (for example "10.0.0.1") creates
-				// an invalid 8-byte address; convert the parsed IP bytes instead.
-				Address:   tcpip.Address(raw),
+				Address:   address,
 				PrefixLen: a.PrefixLength,
 			},
 		})

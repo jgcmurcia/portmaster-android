@@ -1,7 +1,6 @@
 import { CommonModule } from "@angular/common";
 import { Component, EventEmitter, Input, Output, ViewChild, AfterViewInit, OnInit, ChangeDetectorRef } from "@angular/core";
 import { AlertController, IonInput, IonRadioGroup, IonSelect, IonicModule, ModalController } from "@ionic/angular";
-import { MarkdownModule } from "ngx-markdown";
 import { BaseSetting, QuickSetting, SettingValueType } from "src/app/lib/config.types";
 
 export interface SaveSettingEvent<S extends BaseSetting<any, any> = any> {
@@ -17,7 +16,7 @@ export interface SaveSettingEvent<S extends BaseSetting<any, any> = any> {
   standalone: true,
   templateUrl: './edit.component.html',
   styleUrls: ['./edit.component.scss'],
-  imports: [IonicModule, CommonModule, MarkdownModule],
+  imports: [IonicModule, CommonModule],
 })
 export class SettingsEditComponent implements OnInit, AfterViewInit {
 
@@ -117,4 +116,3 @@ export class SettingsEditComponent implements OnInit, AfterViewInit {
   }
  
 }
-

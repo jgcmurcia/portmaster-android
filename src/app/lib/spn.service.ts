@@ -1,21 +1,18 @@
-import { HttpClient, HttpParams, HttpResponse } from "@angular/common/http";
-import { Inject, Injectable } from "@angular/core";
-import { BehaviorSubject, Observable } from "rxjs";
+import { Injectable } from "@angular/core";
+import { BehaviorSubject, Observable, from } from "rxjs";
 import { filter, map, multicast, refCount } from "rxjs/operators";
-import { PortapiService, PORTMASTER_HTTP_API_ENDPOINT } from './portapi.service';
+
+import GoBridge from "../plugins/go.bridge";
+import { PortapiService } from "./portapi.service";
 import { Pin, SPNStatus, UserProfile } from "./spn.types";
 
 @Injectable({ providedIn: 'root' })
 export class SPNService {
 
-  /** Emits the SPN status whenever it changes */
+  /** Emits database-backed SPN status changes when available. */
   status$: Observable<SPNStatus>;
 
-  constructor(
-    private portapi: PortapiService,
-    private http: HttpClient,
-    @Inject(PORTMASTER_HTTP_API_ENDPOINT) private httpAPI: string,
-  ) {
+  constructor(private portapi: PortapiService) {
     this.status$ = this.portapi.watch<SPNStatus>('runtime:spn/status')
       .pipe(
         multicast(() => new BehaviorSubject<any | null>(null)),
@@ -24,72 +21,35 @@ export class SPNService {
       )
   }
 
-  /**
-   * Watches all pins of the "main" SPN map.
-   */
   watchPins(): Observable<Pin[]> {
     return this.portapi.watchAll<Pin>("map:main/")
   }
 
   /**
-   * Encodes a unicode string to base64.
-   * See https://developer.mozilla.org/en-US/docs/Web/API/btoa
-   * and https://stackoverflow.com/questions/30106476/using-javascripts-atob-to-decode-base64-doesnt-properly-decode-utf-8-strings
+   * Critical account operations use the direct Go bridge. This bypasses the
+   * compatibility HTTP/WebView layer and talks to Safing's SPN access client.
    */
-  b64EncodeUnicode(str: string): string {
-    return window.btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, function (match, p1) {
-      return String.fromCharCode(parseInt(p1, 16))
-    }))
+  login({ username, password }: { username: string, password: string }): Observable<string> {
+    return from(GoBridge.SPNLogin(username, password));
   }
 
-  /**
-   *  Logs into the SPN user account
-   */
-  login({ username, password }: { username: string, password: string }): Observable<HttpResponse<string>> {
-    return this.http.post(`${this.httpAPI}/v1/spn/account/login`, undefined, {
-      headers: {
-        Authorization: `Basic ${this.b64EncodeUnicode(username + ':' + password)}`
-      },
-      responseType: 'text',
-      observe: 'response'
-    });
+  logout(_purge = false): Observable<void> {
+    return from(GoBridge.SPNLogout());
   }
 
-  /**
-   * Log out of the SPN user account
-   *
-   * @param purge Whether or not the portmaster should keep user/device information for the next login
-   */
-  logout(purge = false): Observable<HttpResponse<string>> {
-    let params = new HttpParams();
-    if (!!purge) {
-      params.set("purge", "true")
-    }
-    return this.http.delete(`${this.httpAPI}/v1/spn/account/logout`, {
-      params,
-      responseType: 'text',
-      observe: 'response'
-    })
-  }
-
-  /**
-   * Returns the current SPN user profile.
-   *
-   * @param refresh Whether or not the user profile should be refreshed from the ticket agent
-   * @returns
-   */
   userProfile(refresh = false): Observable<UserProfile> {
-    let params = new HttpParams();
-    if (!!refresh) {
-      params = params.set("refresh", true)
-    }
-    return this.http.get<UserProfile>(`${this.httpAPI}/v1/spn/account/user/profile`, {
-      params
-    });
+    const request = refresh
+      ? GoBridge.RefreshSPNUserProfile()
+      : GoBridge.GetSPNUserProfile();
+
+    return from(request).pipe(
+      map(raw => JSON.parse(raw) as UserProfile)
+    );
   }
 
   /**
-   * Watches the user profile. It will emit null if there is no profile available yet.
+   * Keep the database subscription for push updates, but callers can use
+   * userProfile() as a direct fallback if the database bridge is still warming.
    */
   watchProfile(): Observable<UserProfile | null> {
     let hasSent = false;
@@ -97,21 +57,23 @@ export class SPNService {
       .pipe(
         filter(result => {
           if ('type' in result && result.type === 'done') {
-            if (hasSent) {
-              return false;
-            }
+            return !hasSent;
           }
-
-          return true
+          return true;
         }),
         map(result => {
-          hasSent = true;
           if ('type' in result) {
             return null;
           }
-
+          hasSent = true;
           return result;
         })
       );
+  }
+
+  getStatusDirect(): Observable<SPNStatus> {
+    return from(GoBridge.GetSPNStatus()).pipe(
+      map(raw => JSON.parse(raw) as SPNStatus)
+    );
   }
 }

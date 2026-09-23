@@ -26,6 +26,13 @@ public class ServiceCommand extends Function {
   }
 
   public void send(String command) {
+    if ("shutdown".equals(command)) {
+      activity.stopService(new Intent(activity, PortmasterTunnelService.class));
+      return;
+    }
+    if (!"keep_alive".equals(command)) {
+      throw new IllegalArgumentException("Unknown VPN service command");
+    }
     Intent intent = VpnService.prepare(activity.getApplicationContext());
     if(intent != null) {
       intent.putExtra("command", command);

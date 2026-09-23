@@ -28,8 +28,12 @@ export class SPNViewComponent implements OnInit, OnDestroy {
 
   SPNStatus: SPNStatus | null;
   IsGeoIPDataAvailable: boolean = false;
+  TunnelError: string = "";
+  TunnelActive = false;
+  Connecting = false;
 
   private resumeEventSubscription: Subscription;
+  private statusPoll: ReturnType<typeof setInterval> | null = null;
   
   public environmentInjector = inject(EnvironmentInjector);
 
@@ -62,17 +66,21 @@ export class SPNViewComponent implements OnInit, OnDestroy {
     });
 
     this.resumeEventSubscription = this.platform.resume.subscribe(() => {
-      this.EnableTunnelPopup();
       this.CheckGeoIPData();
     });
 
-    this.EnableTunnelPopup();
     this.CheckGeoIPData();
+    this.refreshDirectStatus();
+    this.statusPoll = setInterval(() => this.refreshDirectStatus(), 2000);
 
   }
 
   ngOnDestroy() {
     this.resumeEventSubscription.unsubscribe();
+    if (this.statusPoll !== null) {
+      clearInterval(this.statusPoll);
+      this.statusPoll = null;
+    }
   }
 
   openUserInfo() {
@@ -83,8 +91,16 @@ export class SPNViewComponent implements OnInit, OnDestroy {
     }
   }
 
-  setSPNEnabled(v: boolean) {
-    this.configService.save(`spn/enable`, v).subscribe();
+  async setSPNEnabled(v: boolean) {
+    try {
+      if (v && !(await GoBridge.IsTunnelActive())) {
+        await GoBridge.EnableTunnel();
+      }
+      await GoBridge.SetSPNEnabled(v);
+      await this.refreshDirectStatus();
+    } catch (err) {
+      this.TunnelError = err?.message || String(err);
+    }
   }
 
   isSPNConnected(): boolean {
@@ -105,29 +121,55 @@ export class SPNViewComponent implements OnInit, OnDestroy {
     this.shutdownService.promptShutdown();
   }
 
-  async EnableTunnelPopup() {
-    var active = await GoBridge.IsTunnelActive()
-    if (!active) {
-      const alert = await this.alertController.create({
-        header: "VPN service is disabled!",
-        message: "Portmaster requires a virtual VPN connection to Android to work. Click Ok to enable.",
-        buttons: [
-          {
-            text: "Shutdown",
-          },
-          {
-            text: "Ok",
-            role: "ok"
-          },
-        ]
-      });
-      await alert.present()
-      const { role } = await alert.onDidDismiss();
-      if (role == "ok") {
-        GoBridge.EnableTunnel();
-        return;
+  async enableTunnel() {
+    if (this.Connecting) { return; }
+    this.Connecting = true;
+    this.TunnelError = '';
+    try {
+      await GoBridge.EnableTunnel();
+    } catch (err) {
+      this.TunnelError = err?.message || String(err);
+    } finally {
+      this.Connecting = false;
+      this.changeDetector.detectChanges();
+    }
+  }
+
+  openAppsPage() {
+    this.router.navigate(["/menu/enabled-apps"]);
+  }
+
+  openRoutingPage() {
+    this.router.navigate(["/menu/spn-routing"]);
+  }
+
+  openVPNSettings() {
+    this.router.navigate(["/menu/vpn-settings"]);
+  }
+
+  private async refreshDirectStatus() {
+    try {
+      const rawStatus = await GoBridge.GetSPNStatus();
+      if (rawStatus) {
+        this.SPNStatus = JSON.parse(rawStatus) as SPNStatus;
       }
-      GoBridge.Shutdown();
+      this.TunnelActive = await GoBridge.IsTunnelActive();
+      const tunnelError = await GoBridge.GetTunnelLastError();
+      if (tunnelError || this.TunnelActive) { this.TunnelError = tunnelError; }
+
+      if (!this.User) {
+        try {
+          const rawProfile = await GoBridge.GetSPNUserProfile();
+          if (rawProfile) {
+            this.User = JSON.parse(rawProfile) as UserProfile;
+          }
+        } catch (_) {
+          // Logged-out state is normal.
+        }
+      }
+      this.changeDetector.detectChanges();
+    } catch (err) {
+      console.debug("Direct SPN status not ready", err);
     }
   }
 
@@ -143,7 +185,7 @@ export class SPNViewComponent implements OnInit, OnDestroy {
   }
 
   openConnectionInfo() {
-    if (this.SPNStatus.Status != "connected") {
+    if (!this.SPNStatus || this.SPNStatus.Status != "connected") {
       return;
     }
 

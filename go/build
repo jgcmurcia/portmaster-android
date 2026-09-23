@@ -51,10 +51,14 @@ echo "Run the compiled binary with the -version flag to see the information incl
 BUILD_PATH="github.com/safing/portbase/info"
 
 set -e
+echo Applying Android compatibility patches...
+python3 compat/apply_portmaster_android_compat.py
 echo Generating binding...
 cd codegen 
 go run gen.go go.go java.go ts.go
 cd ..
 echo Building android library...
-gomobile bind -o ../android/app/libs/golib.aar -target=android/arm,android/arm64 -androidapi 29 -ldflags "-s -w -X ${BUILD_PATH}.commit=${BUILD_COMMIT} -X ${BUILD_PATH}.buildOptions=${BUILD_BUILDOPTIONS} -X ${BUILD_PATH}.buildUser=${BUILD_USER} -X ${BUILD_PATH}.buildHost=${BUILD_HOST} -X ${BUILD_PATH}.buildDate=${BUILD_DATE} -X ${BUILD_PATH}.buildSource=${BUILD_SOURCE}" github.com/safing/portmaster-android/go/engine github.com/safing/portmaster-android/go/engine/ui/exported github.com/safing/portmaster-android/go/engine/tunnel github.com/safing/portmaster-android/go/app_interface
+# Keep the Go symbol table: govulncheck cannot resolve imported packages in a
+# stripped library and otherwise reports every vulnerable package in go.mod.
+gomobile bind -o ../android/app/libs/golib.aar -target=android/arm,android/arm64 -androidapi 29 -ldflags "-w -X ${BUILD_PATH}.commit=${BUILD_COMMIT} -X ${BUILD_PATH}.buildOptions=${BUILD_BUILDOPTIONS} -X ${BUILD_PATH}.buildUser=${BUILD_USER} -X ${BUILD_PATH}.buildHost=${BUILD_HOST} -X ${BUILD_PATH}.buildDate=${BUILD_DATE} -X ${BUILD_PATH}.buildSource=${BUILD_SOURCE}" github.com/safing/portmaster-android/go/engine github.com/safing/portmaster-android/go/engine/ui/exported github.com/safing/portmaster-android/go/engine/tunnel github.com/safing/portmaster-android/go/app_interface
 echo Building succesiful

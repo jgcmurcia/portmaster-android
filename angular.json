@@ -34,9 +34,7 @@
               "src/theme/variables.scss",
               "src/global.scss"
             ],
-            "scripts": [
-              "node_modules/marked/marked.min.js",
-            ],
+            "scripts": [],
             "aot": false,
             "vendorChunk": true,
             "extractLicenses": false,

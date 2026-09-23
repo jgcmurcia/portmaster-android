@@ -6,6 +6,15 @@ export interface GoBridgeInterface extends Plugin {
 	IsTunnelActive(): Promise<any>
 	EnableTunnel(): Promise<void>
 	RestartTunnel(): Promise<void>
+	SPNLogin(data: any): Promise<any>
+	SPNLogout(): Promise<void>
+	RefreshSPNUserProfile(): Promise<any>
+	GetSPNUserProfile(): Promise<any>
+	GetSPNStatus(): Promise<any>
+	SetSPNEnabled(data: any): Promise<void>
+	SetSPNExitCountry(data: any): Promise<void>
+	GetSPNExitCountry(): Promise<any>
+	GetTunnelLastError(): Promise<any>
 	GetLogs(data: any): Promise<any>
 	GetDebugInfoFile(): Promise<void>
 	GetDebugInfo(): Promise<any>
@@ -35,15 +44,87 @@ export class GoBridgeClass {
             });
         });
 	}
-	
+
 	public EnableTunnel(): Promise<void> {
 		return GoInterface.EnableTunnel();
 	}
-	
+
 	public RestartTunnel(): Promise<void> {
 		return GoInterface.RestartTunnel();
 	}
-	
+
+	public SPNLogin(username: string, password: string): Promise<string> {
+		return new Promise<string>((resolve, reject) => {
+            GoInterface.SPNLogin({username: username, password: password}).then((result) => {
+               resolve(result.ret0);
+            }, (result) => {
+               reject(result);
+            });
+        });
+	}
+
+	public SPNLogout(): Promise<void> {
+		return GoInterface.SPNLogout();
+	}
+
+	public RefreshSPNUserProfile(): Promise<string> {
+		return new Promise<string>((resolve, reject) => {
+            GoInterface.RefreshSPNUserProfile().then((result) => {
+               resolve(result.ret0);
+            }, (result) => {
+               reject(result);
+            });
+        });
+	}
+
+	public GetSPNUserProfile(): Promise<string> {
+		return new Promise<string>((resolve, reject) => {
+            GoInterface.GetSPNUserProfile().then((result) => {
+               resolve(result.ret0);
+            }, (result) => {
+               reject(result);
+            });
+        });
+	}
+
+	public GetSPNStatus(): Promise<string> {
+		return new Promise<string>((resolve, reject) => {
+            GoInterface.GetSPNStatus().then((result) => {
+               resolve(result.ret0);
+            }, (result) => {
+               reject(result);
+            });
+        });
+	}
+
+	public SetSPNEnabled(enabled: boolean): Promise<void> {
+		return GoInterface.SetSPNEnabled({enabled: enabled});
+	}
+
+	public SetSPNExitCountry(country: string): Promise<void> {
+		return GoInterface.SetSPNExitCountry({country: country});
+	}
+
+	public GetSPNExitCountry(): Promise<string> {
+		return new Promise<string>((resolve, reject) => {
+            GoInterface.GetSPNExitCountry().then((result) => {
+               resolve(result.ret0);
+            }, (result) => {
+               reject(result);
+            });
+        });
+	}
+
+	public GetTunnelLastError(): Promise<string> {
+		return new Promise<string>((resolve, reject) => {
+            GoInterface.GetTunnelLastError().then((result) => {
+               resolve(result.ret0);
+            }, (result) => {
+               reject(result);
+            });
+        });
+	}
+
 	public GetLogs(ID: number): Promise<any> {
 		return new Promise<any>((resolve, reject) => {
             GoInterface.GetLogs({ID: ID}).then((result) => {
@@ -53,11 +134,11 @@ export class GoBridgeClass {
             });
         });
 	}
-	
+
 	public GetDebugInfoFile(): Promise<void> {
 		return GoInterface.GetDebugInfoFile();
 	}
-	
+
 	public GetDebugInfo(): Promise<string> {
 		return new Promise<string>((resolve, reject) => {
             GoInterface.GetDebugInfo().then((result) => {
@@ -67,11 +148,11 @@ export class GoBridgeClass {
             });
         });
 	}
-	
+
 	public Shutdown(): Promise<void> {
 		return GoInterface.Shutdown();
 	}
-	
+
 	public CreateIssue(debugInfo: string, genUrl: boolean, issueRequestStr: string): Promise<string> {
 		return new Promise<string>((resolve, reject) => {
             GoInterface.CreateIssue({debugInfo: debugInfo, genUrl: genUrl, issueRequestStr: issueRequestStr}).then((result) => {
@@ -81,11 +162,11 @@ export class GoBridgeClass {
             });
         });
 	}
-	
+
 	public CreateTicket(debugInfo: string, ticketRequestStr: string): Promise<void> {
 		return GoInterface.CreateTicket({debugInfo: debugInfo, ticketRequestStr: ticketRequestStr});
 	}
-	
+
 	public IsGeoIPDataAvailable(): Promise<boolean> {
 		return new Promise<boolean>((resolve, reject) => {
             GoInterface.IsGeoIPDataAvailable().then((result) => {
@@ -95,7 +176,7 @@ export class GoBridgeClass {
             });
         });
 	}
-	
+
 	public NewApkAvaliable(): Promise<boolean> {
 		return new Promise<boolean>((resolve, reject) => {
             GoInterface.NewApkAvaliable().then((result) => {
@@ -105,7 +186,7 @@ export class GoBridgeClass {
             });
         });
 	}
-	
+
 	public PerformRequest(param: any): Promise<any> {
 		return GoInterface.PerformRequest(param);
 	}
@@ -113,7 +194,7 @@ export class GoBridgeClass {
 	public DatabaseMessage(msg: string): Promise<void> {
 		return GoInterface.DatabaseMessage({msg: msg});
 	}
-	
+
 	public SubscribeToDatabase(param: any): Promise<any> {
 		return GoInterface.SubscribeToDatabase(param);
 	}
@@ -121,11 +202,11 @@ export class GoBridgeClass {
 	public DownloadPendingUpdates(): Promise<void> {
 		return GoInterface.DownloadPendingUpdates();
 	}
-	
+
 	public DownloadUpdatesOnWifiConnected(): Promise<void> {
 		return GoInterface.DownloadUpdatesOnWifiConnected();
 	}
-	
+
 	public IsOnWifiNetwork(): Promise<boolean> {
 		return new Promise<boolean>((resolve, reject) => {
             GoInterface.IsOnWifiNetwork().then((result) => {
@@ -135,7 +216,7 @@ export class GoBridgeClass {
             });
         });
 	}
-	
+
 }
 
 var GoBridge = new GoBridgeClass()

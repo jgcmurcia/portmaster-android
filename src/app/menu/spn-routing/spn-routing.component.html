@@ -1,0 +1,35 @@
+<ion-header>
+  <ion-toolbar>
+    <ion-buttons slot="start">
+      <ion-button (click)="close()">Cancel</ion-button>
+    </ion-buttons>
+    <ion-title>SPN Exit Country</ion-title>
+    <ion-buttons slot="end">
+      <ion-button (click)="save()" [disabled]="saving">Save</ion-button>
+    </ion-buttons>
+  </ion-toolbar>
+</ion-header>
+
+<ion-content class="ion-padding">
+  <ion-list>
+    <ion-item>
+      <ion-label position="stacked">Route Internet traffic through</ion-label>
+      <ion-select [(ngModel)]="selectedCountry" interface="action-sheet">
+        <ion-select-option value="">Automatic (recommended)</ion-select-option>
+        <ion-select-option *ngFor="let country of countries" [value]="country.code">
+          {{ country.name }} ({{ country.code }})
+        </ion-select-option>
+      </ion-select>
+    </ion-item>
+  </ion-list>
+
+  <ion-note>
+    Automatic lets SPN choose the exit closest to each destination. Selecting a
+    country forces new SPN exit routes through that country when an eligible SPN
+    node is available.
+  </ion-note>
+
+  <ion-item color="danger" *ngIf="error">
+    <ion-label class="ion-text-wrap">{{ error }}</ion-label>
+  </ion-item>
+</ion-content>

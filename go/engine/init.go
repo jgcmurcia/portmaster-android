@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/safing/portbase/api"
 	_ "github.com/safing/portbase/database/storage/bbolt"
@@ -16,13 +17,13 @@ import (
 	"github.com/safing/portbase/log"
 	"github.com/safing/portbase/modules"
 	_ "github.com/safing/portbase/rng"
-	"github.com/safing/portbase/run"
 	"github.com/safing/portbase/utils"
 	"github.com/tevino/abool"
 
 	"github.com/safing/portmaster-android/go/app_interface"
 	"github.com/safing/portmaster-android/go/engine/logs"
 	"github.com/safing/portmaster-android/go/engine/tunnel"
+	"github.com/safing/portmaster/core/base"
 	_ "github.com/safing/portmaster/network"
 	"github.com/safing/portmaster/updates"
 	"github.com/safing/portmaster/updates/helper"
@@ -54,23 +55,30 @@ var (
 )
 
 func OnCreate(appDir string) {
-	// Check if engine is already initialized.
-	if engineInitialized.IsSet() {
+	if !engineInitialized.SetToIf(false, true) {
 		fmt.Println("engine: was already initialized")
 		return
 	}
 
-	engineInitialized.Set()
-
 	platformInfo, err := app_interface.GetPlatformInfo()
+	if err != nil || platformInfo == nil {
+		fmt.Printf("engine: failed to get Android platform info: %v\n", err)
+		startup.finish(fmt.Errorf("failed to initialize Android platform: %v", err))
+		return
+	}
+
 	info.Set("PortmasterAndroid", platformInfo.VersionName, "AGPLv3", true)
 	log.SetAdapter(logs.GetLogFunc())
 
 	fmt.Println("engine: initializing...")
 	fmt.Printf("%s %s %s\n", info.GetInfo().Name, info.Version(), info.GetInfo().BuildDate)
 
-	// Get application data dir. Were the application has access to write and read.
 	dataDir = appDir
+	if dataDir == "" {
+		log.Error("engine: Android data directory is empty")
+		startup.finish(fmt.Errorf("Android data directory is empty"))
+		return
+	}
 
 	// Portbase 0.16+ routes API requests through its HTTP/WebSocket router.
 	// Keep it on an ephemeral loopback-only port and require a per-process
@@ -78,44 +86,72 @@ func OnCreate(appDir string) {
 	// API path without exposing Portmaster's administrative API to other apps.
 	if err := configureInternalAPI(); err != nil {
 		log.Errorf("engine: failed to configure internal API: %s", err)
-		engineInitialized.UnSet()
+		startup.finish(err)
 		return
 	}
 
-	// Enable SPN client.
 	conf.EnableClient(true)
-	// Disable SPN listeners.
 	sluice.EnableListener = false
 
-	// Disables auto update for large files. Small files will still be auto downloaded. (filter lists)
+	// Android handles APK updates externally, but the SPN Intel data still needs
+	// the Portmaster updater. Keep software updates disabled while retaining Intel.
 	updates.DisableSoftwareAutoUpdate = true
-	updates.DisableUpdateSchedule()
+	if err := updates.DisableUpdateSchedule(); err != nil {
+		log.Warningf("engine: failed to disable periodic update schedule: %s", err)
+	}
 	helper.IntelOnly()
 
-	// Don't connect after login. GeoIP data is probably not downloaded.
-	access.EnableAfterLogin = false
+	access.EnableAfterLogin = true
 
-	// Initialize database.
-	err = dataroot.Initialize(dataDir, 0o0755)
-	if err != nil {
-		_ = fmt.Errorf("engine: failed to initialize dataroot: %s", err)
+	if err := dataroot.Initialize(dataDir, 0o0755); err != nil {
+		log.Errorf("engine: failed to initialize dataroot: %s", err)
+		startup.finish(err)
 		return
 	}
 	dataRoot = dataroot.Root()
-	err = logs.EnsureLoggingDir(dataRoot)
-	if err != nil {
-		_ = fmt.Errorf("engine: %s", err)
+	if dataRoot == nil {
+		log.Error("engine: dataroot initialized without a root directory")
+		startup.finish(fmt.Errorf("data root is unavailable"))
+		return
+	}
+	if err := logs.EnsureLoggingDir(dataRoot); err != nil {
+		log.Errorf("engine: failed to initialize logging directory: %s", err)
+		startup.finish(err)
+		return
 	}
 
-	// Setup logs
 	if platformInfo.BuildType == "debug" {
 		log.SetLogLevel(log.TraceLevel)
 	}
 	logs.InitLogs()
 
-	// Run the spn service and all the dependencies.
 	go func() {
-		_ = run.Run()
+		// Android owns the process lifecycle; expose the real module startup
+		// result instead of hiding it inside the desktop signal loop.
+		err := modules.Start()
+		startup.finish(err)
+		if err != nil {
+			log.Errorf("engine: failed to start modules: %s", err)
+			_ = modules.Shutdown()
+		}
+	}()
+
+	// Android disables Portmaster's periodic software update scheduler because
+	// APK updates are handled by Android. Intel data is different: SPN cannot
+	// bootstrap without current map/GeoIP resources. Trigger one update as soon
+	// as the updates module is ready, retrying briefly during cold start.
+	go func() {
+		var lastErr error
+		for attempt := 0; attempt < 15; attempt++ {
+			time.Sleep(2 * time.Second)
+			if err := updates.TriggerUpdate(true); err == nil {
+				log.Info("engine: initial Android intel update triggered")
+				return
+			} else {
+				lastErr = err
+			}
+		}
+		log.Warningf("engine: updates module did not become ready for initial intel refresh: %v", lastErr)
 	}()
 }
 
@@ -131,9 +167,6 @@ func InternalAPIToken() string {
 
 func configureInternalAPI() error {
 	internalAPIOnce.Do(func() {
-		// Reserve an available loopback port. Closing the probe listener before
-		// Portbase starts has a tiny race window, but avoids a fixed global port
-		// and greatly reduces conflicts with other Android applications.
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			internalAPIErr = fmt.Errorf("allocate loopback API port: %w", err)
@@ -154,6 +187,7 @@ func configureInternalAPI() error {
 		internalAPIBaseURL = "http://" + address
 
 		api.EnableServer = true
+		base.DefaultAPIListenAddress = address
 		api.SetDefaultAPIListenAddress(address)
 		internalAPIErr = api.SetAuthenticator(func(r *http.Request, _ *http.Server) (*api.AuthToken, error) {
 			supplied := r.Header.Get(InternalAPIAuthHeader)
@@ -169,26 +203,28 @@ func configureInternalAPI() error {
 	return internalAPIErr
 }
 
-// OnDestroy shutdown module system and calls System.exit(0)
 func OnDestroy() {
 	log.Info("engine: OnDestroy")
 
-	err := app_interface.MinimizeApp()
-	if err != nil {
-		log.Errorf("engine: %s", err.Error())
+	if app_interface.HasActivityFunctions() {
+		if err := app_interface.MinimizeApp(); err != nil {
+			log.Errorf("engine: %s", err.Error())
+		}
 	}
 
-	err = modules.Shutdown()
-	if err != nil {
+	if err := modules.Shutdown(); err != nil {
 		log.Errorf("failed to shutdown database: %s", err)
 	}
 	logs.FinalizeLog()
 	engineInitialized.UnSet()
 
-	// Call exit(0) form java so the jvm knows whats happening.
-	err = app_interface.Shutdown()
-	if err != nil {
-		fmt.Printf("engine: failed to shutdown app: %s", err.Error())
+	// Full process termination is retained for this legacy core because the
+	// module registry is not restartable in-process after modules.Shutdown().
+	// It is invoked only after graceful module/TUN teardown has completed.
+	if app_interface.HasOSFunctions() {
+		if err := app_interface.Shutdown(); err != nil {
+			fmt.Printf("engine: failed to shutdown app: %s", err.Error())
+		}
 	}
 }
 
@@ -206,7 +242,6 @@ func SetActivityFunctions(functions app_interface.AppInterface) {
 
 func OnActivityDestroy() {
 	app_interface.RemoveActivityFunctionReference()
-	// CancelAllUISubscriptions()
 	if !app_interface.HasServiceFunctions() || !tunnel.IsActive() {
 		OnDestroy()
 	}
@@ -217,9 +252,6 @@ func SetServiceFunctions(functions app_interface.AppInterface) {
 }
 
 // OnServiceStop is called for an intentional Android service shutdown.
-// The tunnel has already been torn down by the vpn-service manager, so only
-// remove the Java service reference. Treating this as a system failure causes
-// the old shutdown path to recurse and terminate the whole Android process.
 func OnServiceStop() {
 	app_interface.RemoveServiceFunctionReference()
 }

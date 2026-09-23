@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"strings"
 	"text/template"
 )
 
@@ -51,10 +52,17 @@ const goFunctionTemplate = `func {{.Name}}(call engine.PluginCall) {
 		return
 	}
 	{{end}}
-	{{range getSpecialReturnTypes .ReturnTypes}}{{.Name}}Json, _ := json.Marshal({{.Name}})
-	{{end}}
-{{if has_non_error_returns .ReturnTypes}}	// Resolve the call
-	call.ResolveJson({{json_result .ReturnTypes}}){{else}}	// Resolve the call
+	{{if has_non_error_returns .ReturnTypes}}	// Resolve the call. Marshal the complete response instead of formatting
+	// strings into JSON; profiles, diagnostics and errors can contain quotes,
+	// newlines and other characters that must be escaped.
+	result, marshalErr := json.Marshal(map[string]interface{}{
+		{{json_map .ReturnTypes}}
+	})
+	if marshalErr != nil {
+		call.Error(fmt.Sprintf("failed to encode response: %s", marshalErr))
+		return
+	}
+	call.ResolveJson(string(result)){{else}}	// Resolve the call
 	call.Resolve(){{end}}{{else}}	ui.{{.Name}}(call){{end}}
 }
 
@@ -149,6 +157,20 @@ func handleJsonResult(types []string) string {
 	return result
 }
 
+func handleJsonMap(types []string) string {
+	var result strings.Builder
+	for i, t := range types {
+		if t == "error" {
+			continue
+		}
+		if result.Len() > 0 {
+			result.WriteString("\n\t\t")
+		}
+		result.WriteString(fmt.Sprintf(`"ret%d": ret%d,`, i, i))
+	}
+	return result.String()
+}
+
 func printResultArray(vals []string) string {
 	var result string
 	for i, val := range vals {
@@ -201,6 +223,7 @@ func writeToGoFile(filename string, functions []Func) {
 		"get_type_func":         getTypeStringFunction,
 		"handle_errors":         handleErrors,
 		"json_result":           handleJsonResult,
+		"json_map":              handleJsonMap,
 		"has_non_error_returns": hasNonErrorReturnTypes,
 		"getSpecialReturnTypes": getSpecialReturnTypes,
 	})

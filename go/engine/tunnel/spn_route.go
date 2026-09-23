@@ -36,14 +36,23 @@ func (c ConnSPNForward) RemoteAddr() net.Addr {
 }
 
 func (c ConnSPNForward) SetDeadline(t time.Time) error {
+	if conn, ok := c.system.(interface{ SetDeadline(time.Time) error }); ok {
+		return conn.SetDeadline(t)
+	}
 	return nil
 }
 
 func (c ConnSPNForward) SetReadDeadline(t time.Time) error {
+	if conn, ok := c.system.(interface{ SetReadDeadline(time.Time) error }); ok {
+		return conn.SetReadDeadline(t)
+	}
 	return nil
 }
 
 func (c ConnSPNForward) SetWriteDeadline(t time.Time) error {
+	if conn, ok := c.system.(interface{ SetWriteDeadline(time.Time) error }); ok {
+		return conn.SetWriteDeadline(t)
+	}
 	return nil
 }
 

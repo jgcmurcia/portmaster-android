@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"text/template"
+	"unicode"
 )
 
 const javaFileTemplate = `package io.safing.portmaster.android.ui;
@@ -33,13 +34,32 @@ public class GoBridge extends Plugin {
 const javaMethodTemplate = `
 	@PluginMethod()
 	public void {{.Name}}(PluginCall call) {
-		exported.Exported.{{firstLowerCase .Name}}(new GoPluginCall(this, call));
+		exported.Exported.{{gomobileName .Name}}(new GoPluginCall(this, call));
 	}
 `
 
-func firstLetterLowercase(name string) string {
-	name = strings.ToLower(name[0:1]) + name[1:]
-	return name
+// gomobileJavaName mirrors the Java naming convention used by modern gobind:
+// ordinary exported names lower-case their first letter (IsTunnelActive ->
+// isTunnelActive), while a leading Go initialism is lower-cased as a unit
+// (SPNLogin -> spnLogin, URLValue -> urlValue).
+func gomobileJavaName(name string) string {
+	if name == "" {
+		return name
+	}
+
+	runes := []rune(name)
+	prefixEnd := 1
+	for prefixEnd < len(runes) && unicode.IsUpper(runes[prefixEnd]) {
+		// The last uppercase rune before a lowercase word starts that word,
+		// rather than belonging to the initialism: SPNLogin => SPN + Login.
+		if prefixEnd+1 < len(runes) && unicode.IsLower(runes[prefixEnd+1]) {
+			break
+		}
+		prefixEnd++
+	}
+
+	prefix := strings.ToLower(string(runes[:prefixEnd]))
+	return prefix + string(runes[prefixEnd:])
 }
 
 func writeToJavaFile(filename string, functions []Func) {
@@ -52,7 +72,7 @@ func writeToJavaFile(filename string, functions []Func) {
 
 	javaTmpl := template.New("JavaFunctionTemplate")
 	javaTmpl.Funcs(template.FuncMap{
-		"firstLowerCase": firstLetterLowercase,
+		"gomobileName": gomobileJavaName,
 	})
 	_, err = javaTmpl.Parse(javaMethodTemplate)
 	if err != nil {
@@ -71,5 +91,4 @@ func writeToJavaFile(filename string, functions []Func) {
 		fmt.Printf("Failed to write to file: %s", err)
 		return
 	}
-
 }

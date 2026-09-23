@@ -21,6 +21,10 @@ func RemoveActivityFunctionReference() {
 }
 
 func ExportDebugInfo(filename string, content []byte) error {
+	if activityFunctions == nil {
+		return fmt.Errorf("Android activity is not initialized")
+	}
+
 	var args = struct {
 		Filename string
 		Content  []byte
@@ -41,7 +45,16 @@ func ExportDebugInfo(filename string, content []byte) error {
 func SendServicesCommand(command string) error {
 	args, _ := cbor.Marshal(command)
 
-	_, err := activityFunctions.call("SendServiceCommand", args)
+	// Background stop/recovery must work after the Activity has been destroyed.
+	// Never retry a service-side failure through the permission UI.
+	functions := serviceFunctions
+	if functions == nil {
+		functions = activityFunctions
+	}
+	if functions == nil {
+		return fmt.Errorf("Android service and activity are not initialized")
+	}
+	_, err := functions.call("SendServiceCommand", args)
 	if err != nil {
 		return fmt.Errorf("failed to send service command: %s", err)
 	}
@@ -50,6 +63,10 @@ func SendServicesCommand(command string) error {
 }
 
 func SendUIEvent(event Event) error {
+	if activityFunctions == nil {
+		return fmt.Errorf("Android activity is not initialized")
+	}
+
 	args, _ := cbor.Marshal(event)
 
 	_, err := activityFunctions.call("SendUIEvent", args)
@@ -64,6 +81,10 @@ func SendUIWindowEvent(name, data string) error {
 }
 
 func MinimizeApp() error {
+	if activityFunctions == nil {
+		return fmt.Errorf("Android activity is not initialized")
+	}
+
 	_, err := activityFunctions.call("MinimizeApp", nil)
 	if err != nil {
 		return fmt.Errorf("failed to minimize app: %s", err)

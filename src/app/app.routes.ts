@@ -34,4 +34,8 @@ export const routes: Routes = [
     path: 'menu/vpn-settings',
     loadComponent: () => import('./menu/vpn-settings/vpn-settings.component').then((m) => m.VpnSettingsComponent),
   },
+  {
+    path: 'menu/spn-routing',
+    loadComponent: () => import('./menu/spn-routing/spn-routing.component').then((m) => m.SpnRoutingComponent),
+  },
 ];

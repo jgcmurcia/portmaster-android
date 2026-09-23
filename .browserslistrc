@@ -8,8 +8,6 @@
 # You can see what browsers were selected by your queries by running:
 #   npx browserslist
 
-Chrome >=60
-Firefox >=63
-Edge >=79
-Safari >=13
-iOS >=13
+# Match the Angular 20 supported baseline. Android uses an independently
+# updatable Chromium WebView; the Android OS version is not its browser version.
+Baseline widely available on 2025-04-30

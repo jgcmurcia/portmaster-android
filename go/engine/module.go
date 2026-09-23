@@ -114,6 +114,8 @@ func notificationListener() {
 }
 
 func sendNotification(rec record.Record) {
+	rec.Lock()
+	defer rec.Unlock()
 	if rec.Meta().Deleted != 0 {
 		if notify, ok := activeNotifications[rec.Key()]; ok {
 			_ = app_interface.CancelNotification(notify.ID)
