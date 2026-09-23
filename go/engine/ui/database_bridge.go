@@ -117,6 +117,9 @@ func validateDatabaseMessage(msg string) error {
 }
 
 func ensureDatabaseBridge() error {
+	if err := engine.WaitForReady(); err != nil {
+		return err
+	}
 	databaseBridgeMu.Lock()
 	defer databaseBridgeMu.Unlock()
 

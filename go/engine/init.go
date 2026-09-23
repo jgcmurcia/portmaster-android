@@ -17,13 +17,13 @@ import (
 	"github.com/safing/portbase/log"
 	"github.com/safing/portbase/modules"
 	_ "github.com/safing/portbase/rng"
-	"github.com/safing/portbase/run"
 	"github.com/safing/portbase/utils"
 	"github.com/tevino/abool"
 
 	"github.com/safing/portmaster-android/go/app_interface"
 	"github.com/safing/portmaster-android/go/engine/logs"
 	"github.com/safing/portmaster-android/go/engine/tunnel"
+	"github.com/safing/portmaster/core/base"
 	_ "github.com/safing/portmaster/network"
 	"github.com/safing/portmaster/updates"
 	"github.com/safing/portmaster/updates/helper"
@@ -55,16 +55,15 @@ var (
 )
 
 func OnCreate(appDir string) {
-	if engineInitialized.IsSet() {
+	if !engineInitialized.SetToIf(false, true) {
 		fmt.Println("engine: was already initialized")
 		return
 	}
-	engineInitialized.Set()
 
 	platformInfo, err := app_interface.GetPlatformInfo()
 	if err != nil || platformInfo == nil {
 		fmt.Printf("engine: failed to get Android platform info: %v\n", err)
-		engineInitialized.UnSet()
+		startup.finish(fmt.Errorf("failed to initialize Android platform: %v", err))
 		return
 	}
 
@@ -77,7 +76,7 @@ func OnCreate(appDir string) {
 	dataDir = appDir
 	if dataDir == "" {
 		log.Error("engine: Android data directory is empty")
-		engineInitialized.UnSet()
+		startup.finish(fmt.Errorf("Android data directory is empty"))
 		return
 	}
 
@@ -87,7 +86,7 @@ func OnCreate(appDir string) {
 	// API path without exposing Portmaster's administrative API to other apps.
 	if err := configureInternalAPI(); err != nil {
 		log.Errorf("engine: failed to configure internal API: %s", err)
-		engineInitialized.UnSet()
+		startup.finish(err)
 		return
 	}
 
@@ -106,18 +105,18 @@ func OnCreate(appDir string) {
 
 	if err := dataroot.Initialize(dataDir, 0o0755); err != nil {
 		log.Errorf("engine: failed to initialize dataroot: %s", err)
-		engineInitialized.UnSet()
+		startup.finish(err)
 		return
 	}
 	dataRoot = dataroot.Root()
 	if dataRoot == nil {
 		log.Error("engine: dataroot initialized without a root directory")
-		engineInitialized.UnSet()
+		startup.finish(fmt.Errorf("data root is unavailable"))
 		return
 	}
 	if err := logs.EnsureLoggingDir(dataRoot); err != nil {
 		log.Errorf("engine: failed to initialize logging directory: %s", err)
-		engineInitialized.UnSet()
+		startup.finish(err)
 		return
 	}
 
@@ -127,9 +126,13 @@ func OnCreate(appDir string) {
 	logs.InitLogs()
 
 	go func() {
-		exitCode := run.Run()
-		if exitCode != 0 {
-			log.Errorf("engine: Portmaster module system stopped with exit code %d", exitCode)
+		// Android owns the process lifecycle; expose the real module startup
+		// result instead of hiding it inside the desktop signal loop.
+		err := modules.Start()
+		startup.finish(err)
+		if err != nil {
+			log.Errorf("engine: failed to start modules: %s", err)
+			_ = modules.Shutdown()
 		}
 	}()
 
@@ -184,6 +187,7 @@ func configureInternalAPI() error {
 		internalAPIBaseURL = "http://" + address
 
 		api.EnableServer = true
+		base.DefaultAPIListenAddress = address
 		api.SetDefaultAPIListenAddress(address)
 		internalAPIErr = api.SetAuthenticator(func(r *http.Request, _ *http.Server) (*api.AuthToken, error) {
 			supplied := r.Header.Get(InternalAPIAuthHeader)

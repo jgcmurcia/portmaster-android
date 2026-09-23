@@ -29,6 +29,8 @@ export class SPNViewComponent implements OnInit, OnDestroy {
   SPNStatus: SPNStatus | null;
   IsGeoIPDataAvailable: boolean = false;
   TunnelError: string = "";
+  TunnelActive = false;
+  Connecting = false;
 
   private resumeEventSubscription: Subscription;
   private statusPoll: ReturnType<typeof setInterval> | null = null;
@@ -64,11 +66,9 @@ export class SPNViewComponent implements OnInit, OnDestroy {
     });
 
     this.resumeEventSubscription = this.platform.resume.subscribe(() => {
-      this.EnableTunnelPopup();
       this.CheckGeoIPData();
     });
 
-    this.EnableTunnelPopup();
     this.CheckGeoIPData();
     this.refreshDirectStatus();
     this.statusPoll = setInterval(() => this.refreshDirectStatus(), 2000);
@@ -99,7 +99,7 @@ export class SPNViewComponent implements OnInit, OnDestroy {
       await GoBridge.SetSPNEnabled(v);
       await this.refreshDirectStatus();
     } catch (err) {
-      console.error("Failed to change SPN state", err);
+      this.TunnelError = err?.message || String(err);
     }
   }
 
@@ -121,29 +121,17 @@ export class SPNViewComponent implements OnInit, OnDestroy {
     this.shutdownService.promptShutdown();
   }
 
-  async EnableTunnelPopup() {
-    var active = await GoBridge.IsTunnelActive()
-    if (!active) {
-      const alert = await this.alertController.create({
-        header: "VPN service is disabled!",
-        message: "Portmaster requires a virtual VPN connection to Android to work. Click Ok to enable.",
-        buttons: [
-          {
-            text: "Shutdown",
-          },
-          {
-            text: "Ok",
-            role: "ok"
-          },
-        ]
-      });
-      await alert.present()
-      const { role } = await alert.onDidDismiss();
-      if (role == "ok") {
-        GoBridge.EnableTunnel();
-        return;
-      }
-      GoBridge.Shutdown();
+  async enableTunnel() {
+    if (this.Connecting) { return; }
+    this.Connecting = true;
+    this.TunnelError = '';
+    try {
+      await GoBridge.EnableTunnel();
+    } catch (err) {
+      this.TunnelError = err?.message || String(err);
+    } finally {
+      this.Connecting = false;
+      this.changeDetector.detectChanges();
     }
   }
 
@@ -165,7 +153,9 @@ export class SPNViewComponent implements OnInit, OnDestroy {
       if (rawStatus) {
         this.SPNStatus = JSON.parse(rawStatus) as SPNStatus;
       }
-      this.TunnelError = await GoBridge.GetTunnelLastError();
+      this.TunnelActive = await GoBridge.IsTunnelActive();
+      const tunnelError = await GoBridge.GetTunnelLastError();
+      if (tunnelError || this.TunnelActive) { this.TunnelError = tunnelError; }
 
       if (!this.User) {
         try {

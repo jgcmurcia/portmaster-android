@@ -152,3 +152,77 @@ print(f"patched Portmaster updater at {pm_dir}")
 print(f"patched Portmaster GeoIP verification at {geoip_dir}")
 print(f"patched Portbase updater compatibility at {portbase_updater}")
 print(f"patched SPN captain startup ordering at {spn_dir}")
+
+# Android intercepts packets through VpnService/gVisor. The desktop network
+# debug report pulls in compat, whose module requires the Linux/Windows
+# interception driver and prevents the entire Android module graph starting.
+network_api = pm_dir / "network" / "api.go"
+network_api.parent.chmod(network_api.parent.stat().st_mode | 0o200)
+network_api.chmod(network_api.stat().st_mode | 0o200)
+network_source = network_api.read_text()
+compat_import = '\t"github.com/safing/portmaster/compat"\n'
+compat_call = '\tcompat.AddToDebugInfo(di)'
+android_note = '\t// Android VPN diagnostics are provided by the Android engine.'
+if compat_import in network_source and compat_call in network_source:
+    network_source = network_source.replace(compat_import, "", 1)
+    network_source = network_source.replace(compat_call, android_note, 1)
+elif android_note not in network_source:
+    raise SystemExit("could not locate desktop network diagnostics dependency")
+network_api.write_text(network_source)
+print("removed desktop-only compat dependency from Android network diagnostics")
+
+# Cold-start race: status workers read the subsystem dependency slices while
+# Start builds them. Use the manager lock already held by all those readers.
+subsystem_registry = portbase_dir / "modules" / "subsystems" / "registry.go"
+subsystem_registry.parent.chmod(subsystem_registry.parent.stat().st_mode | 0o200)
+subsystem_registry.chmod(subsystem_registry.stat().st_mode | 0o200)
+subsystem_source = subsystem_registry.read_text()
+start_anchor = "func (mng *Manager) Start() error {\n\tmng.immutable.Set()"
+start_locked = "func (mng *Manager) Start() error {\n\tmng.l.Lock()\n\tdefer mng.l.Unlock()\n\tmng.immutable.Set()"
+if start_anchor in subsystem_source:
+    subsystem_source = subsystem_source.replace(start_anchor, start_locked, 1)
+elif start_locked not in subsystem_source:
+    raise SystemExit("could not locate subsystem initialization lock anchor")
+subsystem_registry.write_text(subsystem_source)
+print("serialized subsystem initialization with status readers")
+
+# A fast task can replace t.ctx before the queue waiter reads it. Capture the
+# completion channel under the task lock before launching either goroutine.
+tasks_file = portbase_dir / "modules" / "tasks.go"
+tasks_file.parent.chmod(tasks_file.parent.stat().st_mode | 0o200)
+tasks_file.chmod(tasks_file.stat().st_mode | 0o200)
+tasks_source = tasks_file.read_text()
+wait_anchor = "\tgo t.executeWithLocking()\n\tgo func() {\n\t\tselect {\n\t\tcase <-t.ctx.Done():"
+wait_fixed = "\tt.lock.Lock()\n\texecutionDone := t.ctx.Done()\n\tt.lock.Unlock()\n\tgo t.executeWithLocking()\n\tgo func() {\n\t\tselect {\n\t\tcase <-executionDone:"
+if wait_anchor in tasks_source:
+    tasks_source = tasks_source.replace(wait_anchor, wait_fixed, 1)
+elif wait_fixed not in tasks_source:
+    raise SystemExit("could not locate task completion context race")
+tasks_file.write_text(tasks_source)
+print("captured per-execution task completion channel")
+
+# time.Ticker contains runtime-owned timer state and must not be copied. Modern
+# Go crashes when Stop/Reset is called on the legacy wrapper's copied ticker.
+sleepy_file = portbase_dir / "modules" / "sleepyticker.go"
+sleepy_file.chmod(sleepy_file.stat().st_mode | 0o200)
+sleepy_source = sleepy_file.read_text()
+if "ticker         time.Ticker" in sleepy_source:
+    sleepy_source = sleepy_source.replace("ticker         time.Ticker", "ticker         *time.Ticker", 1)
+    sleepy_source = sleepy_source.replace("*time.NewTicker(normalDuration)", "time.NewTicker(normalDuration)", 1)
+elif "ticker         *time.Ticker" not in sleepy_source:
+    raise SystemExit("could not locate copied SleepyTicker")
+sleepy_file.write_text(sleepy_source)
+print("kept runtime ticker by pointer for safe Stop/Reset")
+
+# Network detection and Android may request the first update concurrently while
+# the updater is still starting. Synchronize the shared pending-update flag.
+update_source = main.read_text()
+if "updateASAP          bool" in update_source:
+    update_source = update_source.replace('"time"', '"time"\n\t"sync/atomic"', 1)
+    update_source = update_source.replace("updateASAP          bool", "updateASAP          atomic.Bool", 1)
+    update_source = update_source.replace("if updateASAP {", "if updateASAP.Load() {", 1)
+    update_source = update_source.replace("updateASAP = true", "updateASAP.Store(true)", 1)
+elif "updateASAP          atomic.Bool" not in update_source:
+    raise SystemExit("could not locate updater startup flag")
+main.write_text(update_source)
+print("made pending startup update flag atomic")

@@ -6,7 +6,7 @@ android {
         applicationId "io.safing.portmaster.android"
         targetSdkVersion rootProject.ext.targetSdkVersion
         minSdkVersion 29
-        versionCode 5
+        versionCode 6
         versionName "0.1.0-droid.${versionCode}"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {

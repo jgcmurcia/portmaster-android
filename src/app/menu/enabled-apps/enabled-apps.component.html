@@ -3,7 +3,7 @@
     <ion-buttons slot="start">
       <ion-button (click)="Close()">Cancel</ion-button>
     </ion-buttons>
-    <ion-title class="ion-text-center">Allowed apps</ion-title>
+    <ion-title class="ion-text-center">Apps using SPN</ion-title>
     <ion-buttons slot="end">
       <ion-button (click)="Save()" [disabled]="Saving || Loading">Save</ion-button>
     </ion-buttons>
@@ -16,8 +16,9 @@
   </ion-list-header>
   <ion-label>
     <p class="ion-padding">
-      Enabled apps enter Portmaster's Android VPN and can use SPN when SPN is active.
-      Disabled apps bypass Portmaster completely.
+      Switch on the apps you want to route through SPN when it is connected.
+      Switched-off apps use your normal Internet connection and bypass Portmaster.
+      Save applies the selection to the active VPN.
     </p>
   </ion-label>
   <div class="ion-text-center ion-padding" *ngIf="Loading">

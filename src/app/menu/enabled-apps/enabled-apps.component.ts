@@ -1,7 +1,6 @@
 import { Component, OnInit } from '@angular/core';
 
 import { IonicModule } from '@ionic/angular';
-import GoBridge from '../../plugins/go.bridge';
 import JavaBridge from '../../plugins/java.bridge';
 
 import { Application } from './application';
@@ -50,7 +49,6 @@ export class EnabledAppsComponent implements OnInit {
 
     try {
       await JavaBridge.setAppSettings({apps: packageNameList});
-      await GoBridge.RestartTunnel();
       this.locationStrategy.back();
     } catch (err) {
       this.Error = err?.message || String(err);

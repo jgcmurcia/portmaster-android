@@ -49,6 +49,15 @@
     </ion-label>
     <spn-button slot="end" class="spn-button" [User]="User" [SPNStatus]="SPNStatus" [IsGeoIPDataAvailable]="IsGeoIPDataAvailable" (onStateChange)="setSPNEnabled($event)" (onLogin)="openLoginPage()"></spn-button>
   </ion-item>
+  <ion-item *ngIf="!TunnelActive">
+    <ion-label class="ion-text-wrap">
+      <strong>VPN disconnected</strong>
+      <p>Connect to enable Portmaster. You can choose applications below before connecting.</p>
+    </ion-label>
+    <ion-button slot="end" (click)="enableTunnel()" [disabled]="Connecting">
+      {{ Connecting ? 'Starting…' : 'Connect' }}
+    </ion-button>
+  </ion-item>
   <!-- Notifications -->
   <notifications/>
   <!-- Download notification/progress -->

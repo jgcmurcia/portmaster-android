@@ -43,10 +43,11 @@ func IsTunnelActive() bool {
 	return tunnel.IsActive()
 }
 
-func EnableTunnel() {
-	if err := app_interface.SendServicesCommand("keep_alive"); err != nil {
-		log.Errorf("ui: failed to start VPN service: %s", err)
+func EnableTunnel() error {
+	if err := engine.WaitForReady(); err != nil {
+		return err
 	}
+	return app_interface.SendServicesCommand("keep_alive")
 }
 
 func RestartTunnel() {
@@ -59,6 +60,10 @@ func SPNLogin(username, password string) (string, error) {
 	username = strings.TrimSpace(username)
 	if username == "" || password == "" {
 		return "", fmt.Errorf("username and password are required")
+	}
+
+	if err := engine.WaitForReady(); err != nil {
+		return "", err
 	}
 
 	access.EnableAfterLogin = true
@@ -120,6 +125,9 @@ func GetSPNStatus() (string, error) {
 }
 
 func SetSPNEnabled(enabled bool) error {
+	if err := engine.WaitForReady(); err != nil {
+		return err
+	}
 	return config.SetConfigOption(captain.CfgOptionEnableSPNKey, enabled)
 }
 

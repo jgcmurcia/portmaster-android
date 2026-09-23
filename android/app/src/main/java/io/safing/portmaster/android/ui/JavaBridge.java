@@ -36,6 +36,11 @@ public class JavaBridge extends Plugin {
     List<ApplicationInfo> packages = pm.getInstalledApplications(0);
     JSONArray list = new JSONArray();
     for (ApplicationInfo packageInfo : packages) {
+      // Portmaster's bootstrap traffic always bypasses the VPN. Do not offer a
+      // toggle that suggests its own package can be routed through SPN.
+      if (packageInfo.packageName.equals(getActivity().getPackageName())) {
+        continue;
+      }
       JSONObject obj = new JSONObject();
       try {
         obj.put("name", pm.getApplicationLabel(packageInfo).toString());
@@ -83,7 +88,7 @@ public class JavaBridge extends Plugin {
           return;
         }
 
-        // Never let Portmaster itself be excluded from its own VpnService.
+        // The service always excludes itself; this is not a user routing choice.
         if (packageName.equals(getActivity().getPackageName())) {
           continue;
         }

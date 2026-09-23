@@ -46,10 +46,12 @@ export class LoginComponent {
             if (!(await GoBridge.IsTunnelActive())) {
               await GoBridge.EnableTunnel();
             }
-          } finally {
-            this.Loading = false;
             this.Password = "";
             this.location.back();
+          } catch (err) {
+            this.Error = 'Signed in, but VPN could not start: ' + (err?.message || String(err));
+          } finally {
+            this.Loading = false;
           }
         },
         error: err => {

@@ -55,7 +55,12 @@ func EnableTunnel(call engine.PluginCall) {
 	}()
 
 	// Function call
-	ui.EnableTunnel()
+	err0 := ui.EnableTunnel()
+
+	if err0 != nil {
+		call.Error(err0.Error())
+		return
+	}
 
 	// Resolve the call
 	call.Resolve()
